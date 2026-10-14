@@ -1,0 +1,40 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owns(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    function validTextItem(userId, itemId) {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'id', 'ownerUid', 'kind', 'textContent', 'contentHash', 'createdAt',
+          'sourceDevice', 'mimeType', 'schemaVersion'
+        ])
+        && data.id == itemId
+        && data.ownerUid == userId
+        && data.kind == 'text'
+        && data.textContent is string
+        && data.textContent.size() > 0
+        && data.textContent.size() <= 1048576
+        && data.contentHash is string
+        && data.contentHash.size() == 64
+        && data.createdAt is number
+        && data.createdAt > 0
+        && data.sourceDevice is string
+        && data.sourceDevice.size() <= 256
+        && data.mimeType == 'text/plain'
+        && data.schemaVersion == 1;
+    }
+
+    match /users/{userId}/items/{itemId} {
+      allow read, delete: if owns(userId);
+      allow create, update: if owns(userId) && validTextItem(userId, itemId);
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
