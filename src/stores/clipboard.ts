@@ -27,9 +27,11 @@ export const useClipboardStore = defineStore('clipboard', {
       this.unlisten = await listen<ClipboardItem>('clipboard://changed', async (event) => {
         await this.refresh()
         if (this.syncUserId) {
-          publishClipboardItem(this.syncUserId, event.payload).catch((error) => {
-            this.syncError = error instanceof Error ? error.message : String(error)
-          })
+          publishClipboardItem(this.syncUserId, event.payload)
+            .then(() => { this.syncError = null })
+            .catch((error) => {
+              this.syncError = error instanceof Error ? error.message : String(error)
+            })
         }
       })
     },
@@ -47,7 +49,10 @@ export const useClipboardStore = defineStore('clipboard', {
       this.syncing = true
       this.unsubscribeRemote = observeRemoteClipboardItems(
         uid,
-        () => this.refresh(),
+        () => {
+          this.syncError = null
+          return this.refresh()
+        },
         (error) => {
           this.syncError = error.message
           this.syncing = false
@@ -55,6 +60,7 @@ export const useClipboardStore = defineStore('clipboard', {
       )
       try {
         await publishRecentClipboardItems(uid)
+        this.syncError = null
       } catch (error) {
         this.syncError = error instanceof Error ? error.message : String(error)
       } finally {
