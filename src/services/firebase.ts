@@ -145,6 +145,32 @@ export function observeWebClipboardItems(
   }, onError)
 }
 
+export async function publishWebClipboardItem(
+  uid: string,
+  item: ClipboardItem,
+  pngBase64?: string,
+): Promise<void> {
+  if (!firestore) throw new Error(firebaseConfigurationError ?? 'Firebase is not configured')
+  if (item.kind === 'text') {
+    if (!item.textContent) throw new Error('Clipboard text is empty')
+    await setDoc(doc(userItems(uid), item.id), {
+      id: item.id, ownerUid: uid, kind: 'text', textContent: item.textContent,
+      contentHash: item.contentHash, createdAt: item.createdAt, sourceDevice: item.sourceDevice,
+      mimeType: 'text/plain', schemaVersion: 2,
+    })
+    return
+  }
+  if (!pngBase64 || !item.width || !item.height) throw new Error('Clipboard image is invalid')
+  const byteLength = Math.floor(pngBase64.length * 3 / 4) - (pngBase64.endsWith('==') ? 2 : pngBase64.endsWith('=') ? 1 : 0)
+  if (byteLength > MAX_SYNC_IMAGE_BYTES) throw new Error('Image exceeds the 25 MiB sync limit')
+  const chunkCount = await uploadImageChunks(uid, item.contentHash, pngBase64)
+  await setDoc(doc(userItems(uid), item.id), {
+    id: item.id, ownerUid: uid, kind: 'image', contentHash: item.contentHash,
+    createdAt: item.createdAt, sourceDevice: item.sourceDevice, width: item.width,
+    height: item.height, mimeType: 'image/png', chunkCount, byteLength, schemaVersion: 2,
+  })
+}
+
 export async function publishClipboardItem(uid: string, item: ClipboardItem): Promise<void> {
   if (!firestore) return
   if (item.kind === 'text') {

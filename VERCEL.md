@@ -17,4 +17,8 @@ The desktop build still uses the native Tauri interface.
 
 The web dashboard is read-only for synced items, except that text items can be copied with the browser clipboard permission. System-wide clipboard capture remains a desktop-app feature.
 
+## Install as an app
+
+The Vercel deployment is a PWA. On iPhone/iPad, open it in Safari and choose **Share → Add to Home Screen**. On Android and supported desktop browsers, use the browser's **Install app** prompt. The app shell remains available offline; Firebase sync and clipboard actions need a connection and browser permission.
+
 Do not put Filebase access or secret keys in Vercel `VITE_` variables. If you later move image bytes from Firestore chunks to Filebase, keep Filebase credentials in a Vercel Function and issue short-lived signed URLs only after verifying the Firebase ID token.

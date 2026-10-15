@@ -1,9 +1,35 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
+import { VitePWA } from 'vite-plugin-pwa'
+
+const isTauriBuild = Boolean(process.env.TAURI_ENV_PLATFORM)
 
 export default defineConfig({
-  plugins: [vue(), tailwindcss()],
+  plugins: [
+    vue(),
+    tailwindcss(),
+    !isTauriBuild && VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: ['icon.png'],
+      manifest: {
+        name: 'MyClipboard',
+        short_name: 'Clipboard',
+        description: 'Your private clipboard, synced across devices.',
+        theme_color: '#0b1020',
+        background_color: '#070c1b',
+        display: 'standalone',
+        start_url: '/',
+        icons: [
+          { src: '/icon.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+        ],
+      },
+      workbox: {
+        navigateFallback: '/index.html',
+        globPatterns: ['**/*.{js,css,html,png,svg,ico}'],
+      },
+    }),
+  ].filter(Boolean),
   clearScreen: false,
   server: {
     port: 1420,
