@@ -15,7 +15,7 @@ Local clipboard history includes:
 - per-item deletion with removal of associated local image files;
 - a compact keyboard-accessible Vue/Pinia interface with loading, empty, and error states.
 
-When signed in to the same Firebase account, text and PNG clipboard images sync between macOS and Windows. Image files are stored directly in Filebase; Firestore stores only their metadata and object key. Global shortcuts, tray/menu-bar behavior, autostart, private mode, and pause controls are not implemented.
+When signed in to the same Firebase account, text and PNG clipboard images sync between macOS and Windows. PNG data is split into bounded Firestore documents so no Cloudflare service or Firebase Storage bucket is required. Global shortcuts, tray/menu-bar behavior, autostart, private mode, and pause controls are not implemented.
 
 ## Prerequisites
 
@@ -112,13 +112,20 @@ Windows clipboard behavior and packaging must be validated on a Windows 11 build
 
 Migration [`src-tauri/migrations/0001_clipboard_items.sql`](src-tauri/migrations/0001_clipboard_items.sql) creates a local `clipboard_items` table. Image rows point to private per-user local files; image bytes are not stored in SQLite. Re-copying identical content updates its timestamp while preserving its stable ID.
 
+## Firebase setup
+
+Copy `.env.example` to `.env` and supply the Firebase web-app values. `.env` files and local databases are ignored by Git.
+
+Enable Email/Password Authentication and Cloud Firestore for the Firebase project. Log in to the Firebase CLI and deploy the Firestore rules before using sync:
+
+```sh
+npx firebase-tools login
+npx firebase-tools deploy --only firestore:rules --project YOUR_PROJECT_ID
+```
+
+Image chunks are saved privately under each Firebase user; the included rules only allow the signed-in owner to read or write them. Firebase configuration values identify the Firebase web app and are not server secrets. Do not put S3/Filebase secret keys in any `VITE_` variable because Vite embeds exposed variables in the desktop bundle.
+
 ## Security and configuration
-
-Copy `.env.example` to `.env` and supply Firebase plus Filebase values. `.env` files and local databases are ignored by Git.
-
-The app talks to Filebase's S3-compatible API directly; there is no Cloudflare Worker. This means a Filebase access key included as a `VITE_` value is embedded in the desktop application and can be extracted. Use a dedicated, least-privileged Filebase key and bucket, never reuse an account-wide key, and rotate the key before distributing the app. For a public release, use a server-side signing service instead.
-
-Configure the Filebase bucket CORS policy to allow `tauri://localhost`, `http://tauri.localhost`, and `https://tauri.localhost` with `GET`, `PUT`, and `HEAD` methods. Images are saved as `users/<firebase-uid>/images/<sha256>.png`.
 
 The Tauri capability grants only `core:default`; clipboard and filesystem access occur inside the Rust process rather than through frontend plugins.
 

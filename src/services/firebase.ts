@@ -12,6 +12,7 @@ import {
 import {
   collection,
   doc,
+  getDoc,
   getFirestore,
   limit,
   onSnapshot,
@@ -22,8 +23,11 @@ import {
 } from 'firebase/firestore'
 
 import { importRemoteImage, importRemoteTextItem, listClipboardItems, readLocalImage } from './clipboard'
-import { downloadImage, filebaseConfigurationError, filebaseConfigured, imageObjectKey, uploadImage } from './filebase'
 import type { ClipboardItem } from '../types'
+
+const IMAGE_CHUNK_CHARACTERS = 700_000
+const MAX_IMAGE_CHUNKS = 50
+const MAX_SYNC_IMAGE_BYTES = 25 * 1024 * 1024
 
 const requiredEnv = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -80,6 +84,42 @@ function userItems(uid: string) {
   return collection(firestore, 'users', uid, 'items')
 }
 
+function imageChunkId(contentHash: string, index: number): string {
+  return `${contentHash}_${index}`
+}
+
+async function uploadImageChunks(uid: string, contentHash: string, pngBase64: string): Promise<number> {
+  if (!firestore) throw new Error(firebaseConfigurationError ?? 'Firebase is not configured')
+  const chunks = Array.from(
+    { length: Math.ceil(pngBase64.length / IMAGE_CHUNK_CHARACTERS) },
+    (_, index) => pngBase64.slice(index * IMAGE_CHUNK_CHARACTERS, (index + 1) * IMAGE_CHUNK_CHARACTERS),
+  )
+  if (chunks.length === 0 || chunks.length > MAX_IMAGE_CHUNKS) {
+    throw new Error('Image is too large to sync')
+  }
+  await Promise.all(chunks.map((dataBase64, index) => setDoc(
+    doc(firestore, 'users', uid, 'imageChunks', imageChunkId(contentHash, index)),
+    { ownerUid: uid, contentHash, index, dataBase64, schemaVersion: 2 },
+  )))
+  return chunks.length
+}
+
+async function downloadImageChunks(uid: string, contentHash: string, chunkCount: number): Promise<string> {
+  if (!firestore || !Number.isInteger(chunkCount) || chunkCount < 1 || chunkCount > MAX_IMAGE_CHUNKS) {
+    throw new Error('Invalid remote image chunks')
+  }
+  const snapshots = await Promise.all(Array.from({ length: chunkCount }, (_, index) => getDoc(
+    doc(firestore, 'users', uid, 'imageChunks', imageChunkId(contentHash, index)),
+  )))
+  return snapshots.map((snapshot, index) => {
+    const data = snapshot.data()
+    if (!snapshot.exists() || data?.contentHash !== contentHash || data.index !== index || typeof data.dataBase64 !== 'string') {
+      throw new Error('Remote image data is incomplete')
+    }
+    return data.dataBase64
+  }).join('')
+}
+
 export async function publishClipboardItem(uid: string, item: ClipboardItem): Promise<void> {
   if (!firestore) return
   if (item.kind === 'text') {
@@ -98,10 +138,12 @@ export async function publishClipboardItem(uid: string, item: ClipboardItem): Pr
     return
   }
 
-  if (!filebaseConfigured) throw new Error(filebaseConfigurationError ?? 'Filebase is not configured')
   if (!item.width || !item.height || item.mimeType !== 'image/png') return
-  const objectKey = imageObjectKey(uid, item.contentHash)
-  await uploadImage(objectKey, await readLocalImage(item.id))
+  const pngBase64 = await readLocalImage(item.id)
+  const byteLength = Math.floor(pngBase64.length * 3 / 4)
+    - (pngBase64.endsWith('==') ? 2 : pngBase64.endsWith('=') ? 1 : 0)
+  if (byteLength > MAX_SYNC_IMAGE_BYTES) throw new Error('Image exceeds the 25 MiB sync limit')
+  const chunkCount = await uploadImageChunks(uid, item.contentHash, pngBase64)
   await setDoc(doc(userItems(uid), item.id), {
     id: item.id,
     ownerUid: uid,
@@ -112,14 +154,15 @@ export async function publishClipboardItem(uid: string, item: ClipboardItem): Pr
     width: item.width,
     height: item.height,
     mimeType: 'image/png',
-    objectKey,
+    chunkCount,
+    byteLength,
     schemaVersion: 2,
   })
 }
 
 export async function publishRecentClipboardItems(uid: string): Promise<void> {
   const localItems = await listClipboardItems('')
-  await Promise.all(localItems.map((item) => publishClipboardItem(uid, item)))
+  for (const item of localItems) await publishClipboardItem(uid, item)
 }
 
 export function observeRemoteClipboardItems(
@@ -133,6 +176,7 @@ export function observeRemoteClipboardItems(
     async (snapshot) => {
       try {
         let imported = false
+        const localHashes = new Set((await listClipboardItems('')).map((item) => item.contentHash))
         for (const change of snapshot.docChanges()) {
           if (change.type === 'removed') continue
           const data = change.doc.data()
@@ -142,6 +186,7 @@ export function observeRemoteClipboardItems(
             typeof data.createdAt !== 'number' ||
             typeof data.sourceDevice !== 'string'
           ) continue
+          if (localHashes.has(data.contentHash)) continue
 
           if (data.kind === 'text' && typeof data.textContent !== 'string') {
             continue
@@ -153,19 +198,20 @@ export function observeRemoteClipboardItems(
               width: null, height: null, mimeType: 'text/plain',
             })
           } else if (
-            data.kind === 'image' && filebaseConfigured && data.objectKey === imageObjectKey(uid, data.contentHash) &&
+            data.kind === 'image' && typeof data.chunkCount === 'number' &&
             typeof data.width === 'number' && typeof data.height === 'number' && data.mimeType === 'image/png'
           ) {
             await importRemoteImage({
               id: data.id, kind: 'image', textContent: null, previewDataUrl: null,
               contentHash: data.contentHash, createdAt: data.createdAt, sourceDevice: data.sourceDevice,
-              width: data.width, height: data.height, mimeType: data.mimeType, objectKey: data.objectKey,
-            }, await downloadImage(data.objectKey))
+              width: data.width, height: data.height, mimeType: data.mimeType,
+            }, await downloadImageChunks(uid, data.contentHash, data.chunkCount))
           } else if (data.kind === 'image') {
-            throw new Error(filebaseConfigurationError ?? 'Invalid remote image metadata')
+            throw new Error('Invalid remote image metadata')
           } else {
             continue
           }
+          localHashes.add(data.contentHash)
           imported = true
         }
         if (imported) onImported()

@@ -115,6 +115,10 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <p v-if="store.syncError" class="mb-3 rounded-lg border border-rose-400/20 bg-rose-400/10 px-3 py-2 text-[11px] leading-4 text-rose-200">
+        {{ store.syncError }}
+      </p>
+
       <label class="relative block">
         <span class="sr-only">Search clipboard history</span>
         <svg class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500" viewBox="0 0 24 24" fill="none" aria-hidden="true">

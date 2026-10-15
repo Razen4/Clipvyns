@@ -25,12 +25,61 @@ service cloud.firestore {
         && data.sourceDevice is string
         && data.sourceDevice.size() <= 256
         && data.mimeType == 'text/plain'
-        && data.schemaVersion == 1;
+        && data.schemaVersion == 2;
+    }
+
+    function validImageItem(userId, itemId) {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'id', 'ownerUid', 'kind', 'contentHash', 'createdAt', 'sourceDevice',
+          'width', 'height', 'mimeType', 'chunkCount', 'byteLength', 'schemaVersion'
+        ])
+        && data.id == itemId
+        && data.ownerUid == userId
+        && data.kind == 'image'
+        && data.contentHash is string
+        && data.contentHash.size() == 64
+        && data.createdAt is number
+        && data.createdAt > 0
+        && data.sourceDevice is string
+        && data.sourceDevice.size() <= 256
+        && data.width is number
+        && data.width > 0
+        && data.height is number
+        && data.height > 0
+        && data.mimeType == 'image/png'
+        && data.chunkCount is number
+        && data.chunkCount > 0
+        && data.chunkCount <= 50
+        && data.byteLength is number
+        && data.byteLength > 0
+        && data.byteLength <= 26214400
+        && data.schemaVersion == 2;
     }
 
     match /users/{userId}/items/{itemId} {
       allow read, delete: if owns(userId);
-      allow create, update: if owns(userId) && validTextItem(userId, itemId);
+      allow create, update: if owns(userId)
+        && (validTextItem(userId, itemId) || validImageItem(userId, itemId));
+    }
+
+    match /users/{userId}/imageChunks/{chunkId} {
+      allow read: if owns(userId);
+      allow create, update: if owns(userId)
+        && request.resource.data.keys().hasOnly([
+          'ownerUid', 'contentHash', 'index', 'dataBase64', 'schemaVersion'
+        ])
+        && request.resource.data.ownerUid == userId
+        && request.resource.data.contentHash is string
+        && request.resource.data.contentHash.size() == 64
+        && request.resource.data.index is number
+        && request.resource.data.index >= 0
+        && request.resource.data.index < 50
+        && request.resource.data.dataBase64 is string
+        && request.resource.data.dataBase64.size() > 0
+        && request.resource.data.dataBase64.size() <= 700000
+        && request.resource.data.schemaVersion == 2;
+      allow delete: if owns(userId);
     }
 
     match /{document=**} {
