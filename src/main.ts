@@ -1,6 +1,8 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
+import WebApp from './WebApp.vue'
 import './styles.css'
 
-createApp(App).use(createPinia()).mount('#app')
+const Root = '__TAURI_INTERNALS__' in window ? App : WebApp
+createApp(Root).use(createPinia()).mount('#app')

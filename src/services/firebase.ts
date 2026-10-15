@@ -104,7 +104,7 @@ async function uploadImageChunks(uid: string, contentHash: string, pngBase64: st
   return chunks.length
 }
 
-async function downloadImageChunks(uid: string, contentHash: string, chunkCount: number): Promise<string> {
+export async function downloadImageChunks(uid: string, contentHash: string, chunkCount: number): Promise<string> {
   if (!firestore || !Number.isInteger(chunkCount) || chunkCount < 1 || chunkCount > MAX_IMAGE_CHUNKS) {
     throw new Error('Invalid remote image chunks')
   }
@@ -118,6 +118,31 @@ async function downloadImageChunks(uid: string, contentHash: string, chunkCount:
     }
     return data.dataBase64
   }).join('')
+}
+
+export function observeWebClipboardItems(
+  uid: string,
+  callback: (items: ClipboardItem[]) => void,
+  onError: (error: Error) => void,
+): Unsubscribe {
+  const recent = query(userItems(uid), orderBy('createdAt', 'desc'), limit(50))
+  return onSnapshot(recent, (snapshot) => {
+    const items: ClipboardItem[] = []
+    for (const entry of snapshot.docs) {
+      const data = entry.data()
+      if (
+        typeof data.id !== 'string' || typeof data.contentHash !== 'string' ||
+        typeof data.createdAt !== 'number' || typeof data.sourceDevice !== 'string'
+      ) continue
+      if (data.kind === 'text' && typeof data.textContent === 'string') {
+        items.push({ id: data.id, kind: 'text', textContent: data.textContent, previewDataUrl: null, contentHash: data.contentHash, createdAt: data.createdAt, sourceDevice: data.sourceDevice, width: null, height: null, mimeType: 'text/plain' })
+      }
+      if (data.kind === 'image' && typeof data.width === 'number' && typeof data.height === 'number' && typeof data.chunkCount === 'number') {
+        items.push({ id: data.id, kind: 'image', textContent: null, previewDataUrl: null, contentHash: data.contentHash, createdAt: data.createdAt, sourceDevice: data.sourceDevice, width: data.width, height: data.height, mimeType: 'image/png', chunkCount: data.chunkCount })
+      }
+    }
+    callback(items)
+  }, onError)
 }
 
 export async function publishClipboardItem(uid: string, item: ClipboardItem): Promise<void> {
