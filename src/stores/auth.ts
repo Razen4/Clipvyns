@@ -6,7 +6,6 @@ import {
   observeAuth,
   prepareAuth,
   requestPasswordReset,
-  registerWithEmail,
   signInWithEmail,
   signOutCurrentUser,
 } from '../services/firebase'
@@ -36,13 +35,12 @@ export const useAuthStore = defineStore('auth', {
         this.ready = true
       }
     },
-    async submit(email: string, password: string, register: boolean) {
+    async submit(email: string, password: string) {
       this.busy = true
       this.error = null
       this.notice = null
       try {
-        if (register) await registerWithEmail(email, password)
-        else await signInWithEmail(email, password)
+        await signInWithEmail(email, password)
       } catch (error) {
         this.error = friendlyAuthError(error)
         throw error

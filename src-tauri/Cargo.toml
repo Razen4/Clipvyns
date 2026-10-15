@@ -1,6 +1,6 @@
 [package]
 name = "clipboard-sharings"
-version = "0.1.0"
+version = "0.1.3"
 description = "Private cross-platform clipboard history"
 authors = ["Clipboard Sharings contributors"]
 edition = "2024"

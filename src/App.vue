@@ -10,7 +10,6 @@ const authStore = useAuthStore()
 const selectedIndex = ref(0)
 const searchInput = ref<HTMLInputElement | null>(null)
 const authOpen = ref(false)
-const authMode = ref<'signin' | 'register'>('signin')
 const email = ref('')
 const password = ref('')
 
@@ -41,7 +40,7 @@ watch(() => authStore.user?.uid, (uid) => {
 
 async function submitAuth() {
   try {
-    await authStore.submit(email.value.trim(), password.value, authMode.value === 'register')
+    await authStore.submit(email.value.trim(), password.value)
     authOpen.value = false
     password.value = ''
   } catch {
@@ -55,6 +54,14 @@ function onSearch(event: Event) {
 }
 
 function onKeydown(event: KeyboardEvent) {
+  if (authOpen.value) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      authOpen.value = false
+    }
+    return
+  }
+
   if (event.key === 'ArrowDown') {
     event.preventDefault()
     selectedIndex.value = Math.min(store.items.length - 1, selectedIndex.value + 1)
@@ -177,7 +184,7 @@ onBeforeUnmount(() => {
       <form class="w-full max-w-sm rounded-2xl border border-white/10 bg-[#11182a] p-5 shadow-2xl" @submit.prevent="submitAuth">
         <div class="mb-4 flex items-start justify-between">
           <div>
-            <h2 class="text-sm font-semibold">{{ authMode === 'signin' ? 'Sync your clipboard' : 'Create sync account' }}</h2>
+            <h2 class="text-sm font-semibold">Sync your clipboard</h2>
             <p class="mt-1 text-[11px] text-slate-500">Use the same account on your Mac and Windows PC.</p>
           </div>
           <button type="button" class="rounded-lg px-2 py-1 text-slate-500 hover:bg-white/8 hover:text-slate-200" aria-label="Close" @click="authOpen = false">×</button>
@@ -189,20 +196,16 @@ onBeforeUnmount(() => {
         </label>
         <label class="block text-[11px] text-slate-400">
           Password
-          <input v-model="password" required minlength="6" type="password" :autocomplete="authMode === 'signin' ? 'current-password' : 'new-password'" class="mt-1.5 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-[13px] text-slate-100 outline-none focus:border-violet-400/60" />
+          <input v-model="password" required minlength="6" type="password" autocomplete="current-password" class="mt-1.5 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-[13px] text-slate-100 outline-none focus:border-violet-400/60" />
         </label>
 
         <p v-if="authStore.error" class="mt-3 rounded-lg bg-rose-400/10 px-3 py-2 text-[11px] leading-4 text-rose-300">{{ authStore.error }}</p>
         <p v-if="authStore.notice" class="mt-3 rounded-lg bg-emerald-400/10 px-3 py-2 text-[11px] leading-4 text-emerald-300">{{ authStore.notice }}</p>
 
         <button class="mt-4 w-full rounded-lg bg-violet-500 px-3 py-2 text-xs font-medium text-white transition hover:bg-violet-400 disabled:cursor-wait disabled:opacity-60" type="submit" :disabled="authStore.busy">
-          {{ authStore.busy ? 'Please wait…' : authMode === 'signin' ? 'Sign in' : 'Create account' }}
-        </button>
-        <button class="mt-2 w-full rounded-lg px-3 py-2 text-[11px] text-slate-500 hover:bg-white/5 hover:text-slate-300" type="button" @click="authMode = authMode === 'signin' ? 'register' : 'signin'">
-          {{ authMode === 'signin' ? 'Need an account? Create one' : 'Already have an account? Sign in' }}
+          {{ authStore.busy ? 'Please wait…' : 'Sign in' }}
         </button>
         <button
-          v-if="authMode === 'signin'"
           class="w-full rounded-lg px-3 py-2 text-[11px] text-slate-500 hover:bg-white/5 hover:text-slate-300 disabled:opacity-50"
           type="button"
           :disabled="authStore.busy"

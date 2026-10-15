@@ -1,7 +1,6 @@
 import { initializeApp } from 'firebase/app'
 import {
   browserLocalPersistence,
-  createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
   sendPasswordResetEmail,
@@ -64,11 +63,6 @@ export function observeAuth(callback: (user: User | null) => void): Unsubscribe 
 export async function signInWithEmail(email: string, password: string): Promise<void> {
   if (!auth) throw new Error(firebaseConfigurationError ?? 'Firebase is not configured')
   await signInWithEmailAndPassword(auth, email, password)
-}
-
-export async function registerWithEmail(email: string, password: string): Promise<void> {
-  if (!auth) throw new Error(firebaseConfigurationError ?? 'Firebase is not configured')
-  await createUserWithEmailAndPassword(auth, email, password)
 }
 
 export async function signOutCurrentUser(): Promise<void> {

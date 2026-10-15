@@ -30,6 +30,46 @@ npm install
 npm run tauri dev
 ```
 
+Build Windows installers (`.exe` and `.msi`) from a Visual Studio Developer PowerShell:
+
+```sh
+npm run build:windows
+```
+
+The installers are written to `src-tauri/target/release/bundle/nsis/` and
+`src-tauri/target/release/bundle/msi/`.
+
+Build macOS bundles (`.app` and `.dmg`) on a Mac:
+
+```sh
+npm ci
+npm run build:macos
+```
+
+The macOS bundles are written to `src-tauri/target/release/bundle/macos/` and
+`src-tauri/target/release/bundle/dmg/`. A Mac or macOS CI runner is required;
+macOS bundles cannot be produced locally on Windows.
+
+To build Windows x64 plus macOS Apple Silicon and Intel in one GitHub Actions
+run, add these repository Actions secrets, then run the **Build desktop
+installers** workflow:
+
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_AUTH_DOMAIN`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_STORAGE_BUCKET`
+- `VITE_FIREBASE_MESSAGING_SENDER_ID`
+- `VITE_FIREBASE_APP_ID`
+
+With GitHub CLI installed and authenticated:
+
+```sh
+gh workflow run build-desktop.yml
+```
+
+Download the completed installers from the workflow run's **Artifacts**
+section. Pushing a tag matching `v*` also starts the workflow automatically.
+
 The local database and image directory are created beneath Tauri's per-user app-data directory. Typical locations are:
 
 - macOS: `~/Library/Application Support/com.razencdev.clipboard-sharings/`
