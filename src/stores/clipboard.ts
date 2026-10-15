@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 import { deleteClipboardItem, listClipboardItems, pasteClipboardItem } from '../services/clipboard'
-import { observeRemoteTextItems, publishRecentTextItems, publishTextItem } from '../services/firebase'
+import { observeRemoteClipboardItems, publishClipboardItem, publishRecentClipboardItems } from '../services/firebase'
 import type { ClipboardItem } from '../types'
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
@@ -26,8 +26,8 @@ export const useClipboardStore = defineStore('clipboard', {
       await this.refresh()
       this.unlisten = await listen<ClipboardItem>('clipboard://changed', async (event) => {
         await this.refresh()
-        if (this.syncUserId && event.payload.kind === 'text') {
-          publishTextItem(this.syncUserId, event.payload).catch((error) => {
+        if (this.syncUserId) {
+          publishClipboardItem(this.syncUserId, event.payload).catch((error) => {
             this.syncError = error instanceof Error ? error.message : String(error)
           })
         }
@@ -45,7 +45,7 @@ export const useClipboardStore = defineStore('clipboard', {
       this.syncUserId = uid
       this.syncError = null
       this.syncing = true
-      this.unsubscribeRemote = observeRemoteTextItems(
+      this.unsubscribeRemote = observeRemoteClipboardItems(
         uid,
         () => this.refresh(),
         (error) => {
@@ -54,7 +54,7 @@ export const useClipboardStore = defineStore('clipboard', {
         },
       )
       try {
-        await publishRecentTextItems(uid)
+        await publishRecentClipboardItems(uid)
       } catch (error) {
         this.syncError = error instanceof Error ? error.message : String(error)
       } finally {

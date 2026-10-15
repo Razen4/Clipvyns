@@ -225,7 +225,10 @@ fn input_error(error: enigo::InputError) -> AppError {
     ))
 }
 
-fn write_png_atomically(image: &DynamicImage, destination: &Path) -> Result<(), AppError> {
+pub(crate) fn write_png_atomically(
+    image: &DynamicImage,
+    destination: &Path,
+) -> Result<(), AppError> {
     let temporary = destination.with_extension("png.tmp");
     image.save_with_format(&temporary, ImageFormat::Png)?;
     std::fs::rename(temporary, destination)?;
@@ -249,7 +252,7 @@ pub(crate) fn text_hash(text: &str) -> String {
     hash_parts(&[b"text\0", text.as_bytes()])
 }
 
-fn image_hash(width: u32, height: u32, bytes: &[u8]) -> String {
+pub(crate) fn image_hash(width: u32, height: u32, bytes: &[u8]) -> String {
     hash_parts(&[
         b"image\0",
         &width.to_le_bytes(),

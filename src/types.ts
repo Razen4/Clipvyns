@@ -11,4 +11,5 @@ export interface ClipboardItem {
   width: number | null
   height: number | null
   mimeType: string | null
+  objectKey?: string | null
 }

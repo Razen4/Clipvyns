@@ -28,3 +28,25 @@ export function importRemoteTextItem(item: ClipboardItem): Promise<void> {
     },
   })
 }
+
+export function readLocalImage(id: string): Promise<string> {
+  return invoke('read_local_image', { id })
+}
+
+export function importRemoteImage(item: ClipboardItem, pngBase64: string): Promise<void> {
+  if (item.kind !== 'image' || !item.width || !item.height || !item.mimeType) {
+    return Promise.reject(new Error('Invalid remote image metadata'))
+  }
+  return invoke('import_remote_image', {
+    item: {
+      id: item.id,
+      contentHash: item.contentHash,
+      createdAt: item.createdAt,
+      sourceDevice: item.sourceDevice,
+      width: item.width,
+      height: item.height,
+      mimeType: item.mimeType,
+    },
+    pngBase64,
+  })
+}

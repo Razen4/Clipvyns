@@ -2,9 +2,9 @@
 
 A compact macOS and Windows clipboard-history application built with Tauri 2, Vue 3, TypeScript, Pinia, Tailwind CSS, Rust, and SQLite.
 
-## Current implementation: Phase 1
+## Current implementation
 
-Phase 1 is local-only and implements:
+Local clipboard history includes:
 
 - native, system-wide polling of text and RGBA image clipboard content in Rust;
 - durable SQLite history with a checked-in migration and WAL journaling;
@@ -15,7 +15,7 @@ Phase 1 is local-only and implements:
 - per-item deletion with removal of associated local image files;
 - a compact keyboard-accessible Vue/Pinia interface with loading, empty, and error states.
 
-Cloud authentication, cross-device sync, global shortcuts, tray/menu-bar behavior, autostart, private mode, and pause controls are intentionally not presented as implemented. They belong to Phases 2–5.
+When signed in to the same Firebase account, text and PNG clipboard images sync between macOS and Windows. Image files are stored directly in Filebase; Firestore stores only their metadata and object key. Global shortcuts, tray/menu-bar behavior, autostart, private mode, and pause controls are not implemented.
 
 ## Prerequisites
 
@@ -114,15 +114,17 @@ Migration [`src-tauri/migrations/0001_clipboard_items.sql`](src-tauri/migrations
 
 ## Security and configuration
 
-Phase 1 needs no secrets. `.env` files and local databases are ignored. `.env.example` contains only future public Firebase client configuration and the future Worker endpoint. Filebase credentials must exist only as encrypted Cloudflare Worker secrets and must never be added to this repository or a `VITE_` variable.
+Copy `.env.example` to `.env` and supply Firebase plus Filebase values. `.env` files and local databases are ignored by Git.
+
+The app talks to Filebase's S3-compatible API directly; there is no Cloudflare Worker. This means a Filebase access key included as a `VITE_` value is embedded in the desktop application and can be extracted. Use a dedicated, least-privileged Filebase key and bucket, never reuse an account-wide key, and rotate the key before distributing the app. For a public release, use a server-side signing service instead.
+
+Configure the Filebase bucket CORS policy to allow `tauri://localhost`, `http://tauri.localhost`, and `https://tauri.localhost` with `GET`, `PUT`, and `HEAD` methods. Images are saved as `users/<firebase-uid>/images/<sha256>.png`.
 
 The Tauri capability grants only `core:default`; clipboard and filesystem access occur inside the Rust process rather than through frontend plugins.
 
 ## Roadmap boundaries
 
 - Phase 2: global shortcuts, tray/menu bar, autostart, and native-paste permissions.
-- Phase 3: Firebase email/password authentication, restrictive Firestore rules and tests, real-time text sync.
-- Phase 4: encrypted image sync through private Filebase storage and a token-verifying Cloudflare Worker.
-- Phase 5: durable sync queue, retry/backoff, pause/private modes, cleanup, and encryption lifecycle.
-- Phase 6: macOS/Windows integration matrices, platform packaging, and release documentation.
+- Durable sync queue, retry/backoff, pause/private modes, cleanup, and encryption lifecycle.
+- macOS/Windows integration matrices, platform packaging, and release documentation.
 # Clipboard-Sharings

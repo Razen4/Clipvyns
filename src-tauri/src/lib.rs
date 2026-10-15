@@ -7,11 +7,14 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use database::Database;
+use image::ImageFormat;
 use model::ClipboardItem;
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 use thiserror::Error;
+use uuid::Uuid;
 
 #[derive(Clone)]
 struct AppState {
@@ -143,6 +146,97 @@ fn import_remote_text_item(
     Ok(())
 }
 
+#[tauri::command]
+fn read_local_image(state: State<'_, AppState>, id: String) -> Result<String, AppError> {
+    let item = state
+        .database
+        .find_by_id(&id)?
+        .ok_or_else(|| AppError::Message("clipboard item no longer exists".into()))?;
+    if item.item.kind != "image" {
+        return Err(AppError::Message("clipboard item is not an image".into()));
+    }
+    let path = item
+        .image_path
+        .ok_or_else(|| AppError::Message("image item has no local file".into()))?;
+    Ok(STANDARD.encode(std::fs::read(path)?))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteImageItem {
+    id: String,
+    content_hash: String,
+    created_at: i64,
+    source_device: String,
+    width: u32,
+    height: u32,
+    mime_type: String,
+}
+
+#[tauri::command]
+fn import_remote_image(
+    state: State<'_, AppState>,
+    item: RemoteImageItem,
+    png_base64: String,
+) -> Result<(), AppError> {
+    if item.id.len() > 128
+        || Uuid::parse_str(&item.id).is_err()
+        || item.source_device.len() > 256
+        || item.created_at <= 0
+        || item.mime_type != "image/png"
+    {
+        return Err(AppError::Message("remote image metadata is invalid".into()));
+    }
+    let png = STANDARD
+        .decode(png_base64)
+        .map_err(|_| AppError::Message("remote image is not valid base64".into()))?;
+    if png.is_empty() || png.len() > 25 * 1024 * 1024 {
+        return Err(AppError::Message(
+            "remote image exceeds the 25 MiB limit".into(),
+        ));
+    }
+    let image = image::load_from_memory_with_format(&png, ImageFormat::Png)?;
+    let rgba = image.into_rgba8();
+    let (width, height) = rgba.dimensions();
+    if width != item.width
+        || height != item.height
+        || clipboard::image_hash(width, height, rgba.as_raw()) != item.content_hash
+    {
+        return Err(AppError::Message(
+            "remote image failed integrity validation".into(),
+        ));
+    }
+
+    if state.database.find_by_hash(&item.content_hash)?.is_some() {
+        return Ok(());
+    }
+    let image_path = state.image_directory.join(format!("{}.png", item.id));
+    let thumbnail_path = state.image_directory.join(format!("{}.thumb.png", item.id));
+    clipboard::write_png_atomically(&image::DynamicImage::ImageRgba8(rgba.clone()), &image_path)?;
+    clipboard::write_png_atomically(
+        &image::DynamicImage::ImageRgba8(rgba).thumbnail(320, 180),
+        &thumbnail_path,
+    )?;
+    if let Err(error) = state.database.upsert(database::NewItem {
+        id: &item.id,
+        kind: "image",
+        text_content: None,
+        image_path: Some(&image_path),
+        thumbnail_path: Some(&thumbnail_path),
+        content_hash: &item.content_hash,
+        created_at: item.created_at,
+        source_device: &item.source_device,
+        width: Some(width),
+        height: Some(height),
+        mime_type: Some("image/png"),
+    }) {
+        let _ = std::fs::remove_file(image_path);
+        let _ = std::fs::remove_file(thumbnail_path);
+        return Err(error);
+    }
+    Ok(())
+}
+
 fn minimize_for_paste(window: &tauri::WebviewWindow) -> Result<(), AppError> {
     window.minimize().map_err(tauri_error)
 }
@@ -182,7 +276,9 @@ pub fn run() {
             list_clipboard_items,
             paste_clipboard_item,
             delete_clipboard_item,
-            import_remote_text_item
+            import_remote_text_item,
+            read_local_image,
+            import_remote_image
         ])
         .run(tauri::generate_context!())
         .expect("error while running clipboard application");
