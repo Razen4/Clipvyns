@@ -149,11 +149,33 @@ struct PasteResult {
 
 #[tauri::command]
 fn delete_clipboard_item(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
-    let item = state
-        .database
-        .delete_by_id(&id)?
-        .ok_or_else(|| AppError::Message("clipboard item no longer exists".into()))?;
+    if let Some(item) = state.database.delete_by_id(&id)? {
+        remove_item_files(item);
+    }
+    Ok(())
+}
 
+#[tauri::command]
+fn delete_clipboard_item_by_hash(
+    state: State<'_, AppState>,
+    content_hash: String,
+) -> Result<(), AppError> {
+    if let Some(item) = state.database.delete_by_hash(&content_hash)? {
+        remove_item_files(item);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_clipboard_item_pinned(
+    state: State<'_, AppState>,
+    id: String,
+    pinned: bool,
+) -> Result<(), AppError> {
+    state.database.set_pinned_by_id(&id, pinned)
+}
+
+fn remove_item_files(item: model::StoredItem) {
     for path in [item.image_path, item.thumbnail_path].into_iter().flatten() {
         if let Err(error) = std::fs::remove_file(&path)
             && error.kind() != std::io::ErrorKind::NotFound
@@ -161,7 +183,6 @@ fn delete_clipboard_item(state: State<'_, AppState>, id: String) -> Result<(), A
             eprintln!("failed to remove clipboard image {path}: {error}");
         }
     }
-    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -172,6 +193,8 @@ struct RemoteTextItem {
     content_hash: String,
     created_at: i64,
     source_device: String,
+    #[serde(default)]
+    pinned: bool,
 }
 
 #[tauri::command]
@@ -207,7 +230,11 @@ fn import_remote_text_item(
         width: None,
         height: None,
         mime_type: Some("text/plain"),
+        pinned: false,
     })?;
+    state
+        .database
+        .set_pinned_by_hash(&item.content_hash, item.pinned)?;
     Ok(())
 }
 
@@ -236,6 +263,8 @@ struct RemoteImageItem {
     width: u32,
     height: u32,
     mime_type: String,
+    #[serde(default)]
+    pinned: bool,
 }
 
 #[tauri::command]
@@ -294,11 +323,15 @@ fn import_remote_image(
         width: Some(width),
         height: Some(height),
         mime_type: Some("image/png"),
+        pinned: false,
     }) {
         let _ = std::fs::remove_file(image_path);
         let _ = std::fs::remove_file(thumbnail_path);
         return Err(error);
     }
+    state
+        .database
+        .set_pinned_by_hash(&item.content_hash, item.pinned)?;
     Ok(())
 }
 
@@ -365,6 +398,8 @@ pub fn run() {
             list_clipboard_items,
             paste_clipboard_item,
             delete_clipboard_item,
+            delete_clipboard_item_by_hash,
+            set_clipboard_item_pinned,
             import_remote_text_item,
             read_local_image,
             import_remote_image

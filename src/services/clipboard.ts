@@ -41,6 +41,14 @@ export function deleteClipboardItem(id: string): Promise<void> {
   return invoke('delete_clipboard_item', { id })
 }
 
+export function deleteClipboardItemByHash(contentHash: string): Promise<void> {
+  return invoke('delete_clipboard_item_by_hash', { contentHash })
+}
+
+export function setClipboardItemPinned(id: string, pinned: boolean): Promise<void> {
+  return invoke('set_clipboard_item_pinned', { id, pinned })
+}
+
 export function importRemoteTextItem(item: ClipboardItem): Promise<void> {
   if (item.kind !== 'text' || !item.textContent) {
     return Promise.reject(new Error('Only non-empty text items can be imported'))

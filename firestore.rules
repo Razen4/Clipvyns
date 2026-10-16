@@ -10,7 +10,7 @@ service cloud.firestore {
       let data = request.resource.data;
       return data.keys().hasOnly([
           'id', 'ownerUid', 'kind', 'textContent', 'contentHash', 'createdAt',
-          'sourceDevice', 'mimeType', 'schemaVersion'
+          'sourceDevice', 'mimeType', 'pinned', 'schemaVersion'
         ])
         && data.id == itemId
         && data.ownerUid == userId
@@ -25,6 +25,7 @@ service cloud.firestore {
         && data.sourceDevice is string
         && data.sourceDevice.size() <= 256
         && data.mimeType == 'text/plain'
+        && data.pinned is bool
         && data.schemaVersion == 2;
     }
 
@@ -32,7 +33,7 @@ service cloud.firestore {
       let data = request.resource.data;
       return data.keys().hasOnly([
           'id', 'ownerUid', 'kind', 'contentHash', 'createdAt', 'sourceDevice',
-          'width', 'height', 'mimeType', 'chunkCount', 'byteLength', 'schemaVersion'
+          'width', 'height', 'mimeType', 'chunkCount', 'byteLength', 'pinned', 'schemaVersion'
         ])
         && data.id == itemId
         && data.ownerUid == userId
@@ -48,6 +49,7 @@ service cloud.firestore {
         && data.height is number
         && data.height > 0
         && data.mimeType == 'image/png'
+        && data.pinned is bool
         && data.chunkCount is number
         && data.chunkCount > 0
         && data.chunkCount <= 50

@@ -13,6 +13,7 @@ pub struct ClipboardItem {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub mime_type: Option<String>,
+    pub pinned: bool,
 }
 
 #[derive(Clone, Debug)]

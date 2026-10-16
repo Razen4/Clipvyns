@@ -92,6 +92,7 @@ fn capture_current(
             width: None,
             height: None,
             mime_type: Some("text/plain"),
+            pinned: false,
         })?;
         set_observed(&state.last_observed_hash, hash);
         return Ok(Some(stored));
@@ -120,6 +121,7 @@ fn capture_image(
             width: Some(width),
             height: Some(height),
             mime_type: Some("image/png"),
+            pinned: false,
         });
     }
 
@@ -146,6 +148,7 @@ fn capture_image(
         width: Some(width),
         height: Some(height),
         mime_type: Some("image/png"),
+        pinned: false,
     }) {
         Ok(item) => Ok(item),
         Err(error) => {
@@ -362,6 +365,7 @@ mod tests {
                 width: None,
                 height: None,
                 mime_type: Some("text/plain"),
+                pinned: false,
             })
             .unwrap();
         restore_item(&state, text_item).unwrap();

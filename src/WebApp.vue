@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Unsubscribe } from 'firebase/firestore'
 import { useAuthStore } from './stores/auth'
-import { DEVICE_ACTIVE_WINDOW_MS, DEVICE_HEARTBEAT_INTERVAL_MS, downloadImageChunks, observeDevices, observeWebClipboardItems, publishDevicePresence, publishWebClipboardItem, type ConnectedDevice } from './services/firebase'
+import { DEVICE_ACTIVE_WINDOW_MS, DEVICE_HEARTBEAT_INTERVAL_MS, deleteSyncedClipboardItem, downloadImageChunks, observeDevices, observeWebClipboardItems, publishDevicePresence, publishWebClipboardItem, setSyncedClipboardItemPinned, type ConnectedDevice } from './services/firebase'
 import type { ClipboardItem } from './types'
 
 const auth = useAuthStore()
@@ -17,6 +17,7 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const deviceError = ref<string | null>(null)
 const pasting = ref(false)
+const copiedItemId = ref<string | null>(null)
 const activeSection = ref<'clipboard' | 'devices' | 'settings'>('clipboard')
 const mobilePreviewOpen = ref(false)
 const devices = ref<ConnectedDevice[]>([])
@@ -26,11 +27,12 @@ let stopDevices: Unsubscribe | null = null
 let presenceTimer: ReturnType<typeof setInterval> | null = null
 let clockTimer: ReturnType<typeof setInterval> | null = null
 let refreshPresence: (() => Promise<void>) | null = null
+let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 
 const visible = computed(() => items.value.filter((item) => {
   const haystack = `${item.textContent || ''} ${item.sourceDevice}`.toLowerCase()
   return (filter.value === 'all' || item.kind === filter.value) && haystack.includes(search.value.toLowerCase())
-}))
+}).sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt - a.createdAt))
 const profileName = computed(() => auth.user?.displayName || auth.user?.email?.split('@')[0] || 'MyClipboard user')
 const profileInitial = computed(() => profileName.value.trim().charAt(0).toUpperCase() || 'U')
 
@@ -70,7 +72,22 @@ watch(() => auth.user?.uid, (uid) => {
   }, (reason) => { error.value = reason.message; loading.value = false })
 }, { immediate: true })
 async function submit() { try { await auth.submit(email.value.trim(), password.value); loginOpen.value = false } catch { /* exposed by auth store */ } }
-async function copy(item: ClipboardItem) { if (item.kind === 'text' && item.textContent) await navigator.clipboard.writeText(item.textContent) }
+async function copy(item: ClipboardItem) {
+  try {
+    if (item.kind === 'text' && item.textContent) await navigator.clipboard.writeText(item.textContent)
+    else if (item.kind === 'image' && item.previewDataUrl) {
+      const blob = await (await fetch(item.previewDataUrl)).blob()
+      await navigator.clipboard.write([new globalThis.ClipboardItem({ [blob.type || 'image/png']: blob })])
+    } else throw new Error('This clipboard item is unavailable')
+    copiedItemId.value = item.id
+    if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
+    copyFeedbackTimer = setTimeout(() => { copiedItemId.value = null }, 2200)
+  } catch (reason) {
+    error.value = reason instanceof Error && reason.name === 'NotAllowedError'
+      ? 'Allow clipboard permission in your browser, then try again.'
+      : reason instanceof Error ? reason.message : String(reason)
+  }
+}
 async function pasteFromClipboard() {
   if (!auth.user) { loginOpen.value = true; return }
   pasting.value = true; error.value = null
@@ -95,7 +112,7 @@ async function publishText(text: string) {
   const contentHash = await hashParts([new TextEncoder().encode('text\0'), new TextEncoder().encode(text)])
   await publishWebClipboardItem(auth.user!.uid, {
     id: crypto.randomUUID(), kind: 'text', textContent: text, previewDataUrl: null, contentHash,
-    createdAt: Date.now(), sourceDevice: webDeviceName(), width: null, height: null, mimeType: 'text/plain',
+    createdAt: Date.now(), sourceDevice: webDeviceName(), width: null, height: null, mimeType: 'text/plain', pinned: false,
   })
 }
 async function publishImage(blob: Blob) {
@@ -110,7 +127,7 @@ async function publishImage(blob: Blob) {
   const pngBase64 = canvas.toDataURL('image/png').split(',', 2)[1]
   await publishWebClipboardItem(auth.user!.uid, {
     id: crypto.randomUUID(), kind: 'image', textContent: null, previewDataUrl: `data:image/png;base64,${pngBase64}`,
-    contentHash, createdAt: Date.now(), sourceDevice: webDeviceName(), width: canvas.width, height: canvas.height, mimeType: 'image/png',
+    contentHash, createdAt: Date.now(), sourceDevice: webDeviceName(), width: canvas.width, height: canvas.height, mimeType: 'image/png', pinned: false,
   }, pngBase64)
 }
 async function hashParts(parts: Uint8Array[]): Promise<string> {
@@ -125,11 +142,25 @@ async function loadImage(blob: Blob): Promise<HTMLImageElement> {
 }
 function webDeviceName() { return `Web · ${navigator.platform || 'browser'}` }
 function selectItem(item: ClipboardItem) { selected.value = item; if (window.matchMedia('(max-width: 1279px)').matches) mobilePreviewOpen.value = true }
+async function togglePinned(item: ClipboardItem) {
+  if (!auth.user) { loginOpen.value = true; return }
+  error.value = null
+  try { await setSyncedClipboardItemPinned(auth.user.uid, item, !item.pinned) }
+  catch (reason) { error.value = reason instanceof Error ? reason.message : String(reason) }
+}
+async function removeItem(item: ClipboardItem) {
+  if (!auth.user) { loginOpen.value = true; return }
+  error.value = null
+  try {
+    await deleteSyncedClipboardItem(auth.user.uid, item)
+    if (selected.value?.id === item.id) selected.value = null
+  } catch (reason) { error.value = reason instanceof Error ? reason.message : String(reason) }
+}
 function showSection(section: 'clipboard' | 'devices' | 'settings') { activeSection.value = section; mobilePreviewOpen.value = false }
 function deviceIsOnline(device: ConnectedDevice) { return now.value - device.lastSeen < DEVICE_ACTIVE_WINDOW_MS }
 function refreshPresenceWhenVisible() { if (document.visibilityState === 'visible') void refreshPresence?.() }
 function age(value: number) { const min = Math.floor((Date.now() - value) / 60000); return min < 1 ? 'now' : min < 60 ? `${min}m ago` : `${Math.floor(min / 60)}h ago` }
-onBeforeUnmount(() => { stop?.(); stopDevices?.(); if (presenceTimer) clearInterval(presenceTimer); if (clockTimer) clearInterval(clockTimer); document.removeEventListener('visibilitychange', refreshPresenceWhenVisible) })
+onBeforeUnmount(() => { stop?.(); stopDevices?.(); if (presenceTimer) clearInterval(presenceTimer); if (clockTimer) clearInterval(clockTimer); if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer); document.removeEventListener('visibilitychange', refreshPresenceWhenVisible) })
 onMounted(() => { auth.initialize(); clockTimer = setInterval(() => { now.value = Date.now() }, 60_000); document.addEventListener('visibilitychange', refreshPresenceWhenVisible) })
 </script>
 
@@ -159,7 +190,8 @@ onMounted(() => { auth.initialize(); clockTimer = setInterval(() => { now.value 
           <button class="paste-action" :disabled="pasting" @click="pasteFromClipboard"><span aria-hidden="true">▣</span> {{ pasting ? 'Pasting…' : 'Paste from clipboard' }}</button>
         </div>
       </header>
-      <template v-if="activeSection === 'clipboard'"><div class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]"><section class="panel web-list"><div class="mb-5 flex gap-2"><button v-for="tab in [['all','All'],['image','Images'],['text','Text']] as const" :key="tab[0]" class="filter" :class="filter === tab[0] && 'selected'" @click="filter = tab[0]">{{ tab[1] }}</button></div><div v-if="!auth.signedIn || loading || error || !visible.length" class="empty">{{ error || (auth.signedIn ? (loading ? 'Loading clipboard…' : 'No clipboard items yet.') : 'Sign in to view your synced clipboard.') }}</div><div v-else class="space-y-3"><button v-for="item in visible" :key="item.id" class="clip" :class="selected?.id === item.id && 'clip-selected'" @click="selectItem(item)"><div class="thumb" :class="item.kind === 'text' && 'text-thumb'"><img v-if="item.previewDataUrl" :src="item.previewDataUrl" alt="Clipboard preview" /><span v-else>{{ item.kind === 'image' ? '▧' : '≡' }}</span></div><div class="min-w-0 flex-1 text-left"><b :class="item.kind === 'text' ? 'text-preview' : 'block truncate'">{{ item.kind === 'image' ? `Image · ${item.width} × ${item.height}` : item.textContent }}</b><p v-if="item.kind === 'image'" class="mt-1 truncate text-sm text-slate-400">PNG image</p><p class="mt-2 text-xs text-slate-500">● {{ item.sourceDevice }} · {{ age(item.createdAt) }}</p></div><span class="badge">{{ item.kind }}</span></button></div></section><aside class="panel web-detail"><template v-if="selected"><div class="mb-4 flex justify-between"><b>{{ selected.kind === 'image' ? `Image · ${selected.width} × ${selected.height}` : 'Text item' }}</b><span class="badge">{{ selected.kind }}</span></div><div class="preview"><img v-if="selected.previewDataUrl" :src="selected.previewDataUrl" alt="Selected image" /><p v-else>{{ selected.textContent }}</p></div><dl class="info"><div><dt>Device</dt><dd>{{ selected.sourceDevice }}</dd></div><div><dt>Type</dt><dd>{{ selected.mimeType }}</dd></div><div><dt>Copied</dt><dd>{{ new Date(selected.createdAt).toLocaleString() }}</dd></div></dl><button class="primary mt-5 w-full" @click="copy(selected)">Copy text</button></template><div v-else class="empty">Select an item to view details.</div></aside></div>
+      <div v-if="copiedItemId" class="copy-toast" role="status" aria-live="polite"><span aria-hidden="true">✓</span> Copied to clipboard</div>
+      <template v-if="activeSection === 'clipboard'"><div class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]"><section class="panel web-list"><div class="mb-5 flex gap-2"><button v-for="tab in [['all','All'],['image','Images'],['text','Text']] as const" :key="tab[0]" class="filter" :class="filter === tab[0] && 'selected'" @click="filter = tab[0]">{{ tab[1] }}</button></div><div v-if="!auth.signedIn || loading || error || !visible.length" class="empty">{{ error || (auth.signedIn ? (loading ? 'Loading clipboard…' : 'No clipboard items yet.') : 'Sign in to view your synced clipboard.') }}</div><div v-else class="space-y-3"><article v-for="item in visible" :key="item.id" class="clip-row"><button class="clip" :class="[selected?.id === item.id && 'clip-selected', item.pinned && 'clip-pinned']" @click="selectItem(item)"><div class="thumb" :class="item.kind === 'text' && 'text-thumb'"><img v-if="item.previewDataUrl" :src="item.previewDataUrl" alt="Clipboard preview" /><span v-else>{{ item.kind === 'image' ? '▧' : '≡' }}</span></div><div class="min-w-0 flex-1 text-left"><b :class="item.kind === 'text' ? 'text-preview' : 'block truncate'">{{ item.kind === 'image' ? `Image · ${item.width} × ${item.height}` : item.textContent }}</b><p v-if="item.kind === 'image'" class="mt-1 truncate text-sm text-slate-400">PNG image</p><p class="mt-2 text-xs text-slate-500">● {{ item.sourceDevice }} · {{ age(item.createdAt) }}</p></div><span class="badge">{{ item.kind }}</span></button><div class="clip-actions"><button type="button" class="clip-pin" :class="item.pinned && 'pinned'" :aria-label="item.pinned ? 'Unpin clipboard item' : 'Pin clipboard item'" :title="item.pinned ? 'Unpin' : 'Pin'" @click="togglePinned(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 4 6 6-3 1-4 4-2 5-2-5-4-4-3-1 6-6z" /></svg></button><button type="button" class="clip-delete" aria-label="Delete clipboard item" title="Delete clipboard item" @click="removeItem(item)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M9 7l1-2h4l1 2m-8 0 1 13h8l1-13" /></svg></button></div></article></div></section><aside class="panel web-detail"><template v-if="selected"><div class="mb-4 flex justify-between"><b>{{ selected.kind === 'image' ? `Image · ${selected.width} × ${selected.height}` : 'Text item' }}</b><span class="badge">{{ selected.kind }}</span></div><div class="preview"><img v-if="selected.previewDataUrl" :src="selected.previewDataUrl" alt="Selected image" /><p v-else>{{ selected.textContent }}</p></div><dl class="info"><div><dt>Device</dt><dd>{{ selected.sourceDevice }}</dd></div><div><dt>Type</dt><dd>{{ selected.mimeType }}</dd></div><div><dt>Copied</dt><dd>{{ new Date(selected.createdAt).toLocaleString() }}</dd></div></dl><button class="primary mt-5 w-full" @click="copy(selected)">Copy text</button></template><div v-else class="empty">Select an item to view details.</div></aside></div>
       <aside v-if="selected && mobilePreviewOpen" class="mobile-preview-sheet xl:hidden"><div class="flex items-center justify-between"><b>Preview</b><button aria-label="Close preview" @click="mobilePreviewOpen = false">×</button></div><img v-if="selected.previewDataUrl" :src="selected.previewDataUrl" alt="Selected preview" /><p v-else>{{ selected.textContent }}</p><button class="primary w-full" @click="copy(selected)">Copy text</button></aside></template>
       <section v-else-if="activeSection === 'devices'" class="panel devices-panel"><div v-if="!auth.signedIn" class="empty">Sign in to see connected devices.</div><div v-else-if="deviceError" class="empty">Device sync error: {{ deviceError }}</div><div v-else-if="!devices.length" class="empty">No device heartbeat yet. Open the desktop or web app while signed in.</div><div v-else class="space-y-3"><article v-for="device in devices" :key="device.id" class="device-card"><div class="device-icon">{{ device.platform.toLowerCase().includes('win') ? '⊞' : device.platform.toLowerCase().includes('mac') ? '⌘' : '◫' }}</div><div class="min-w-0 flex-1"><b class="block truncate">{{ device.name }}</b><p class="mt-1 text-sm text-slate-400">{{ device.platform }}</p><p class="mt-2 text-xs" :class="deviceIsOnline(device) ? 'text-emerald-400' : 'text-slate-500'">● {{ deviceIsOnline(device) ? 'Active recently' : `Last seen ${age(device.lastSeen)}` }}</p></div><span class="badge" :class="deviceIsOnline(device) ? 'device-online' : 'device-offline'">{{ deviceIsOnline(device) ? 'Active' : 'Inactive' }}</span></article></div></section>
       <section v-else class="panel settings-panel"><h2 class="text-lg font-semibold">Sync settings</h2><div class="setting-row"><div><b>Auto sync</b><p>New clipboard items sync immediately in realtime.</p></div><span class="setting-on">On</span></div><div class="setting-row"><div><b>Device status</b><p>Presence refreshes every 10 minutes and when the app becomes active.</p></div><span>10 min</span></div><div class="setting-row"><div><b>Keep latest items</b><p>The desktop history and web feed show the latest 50 items.</p></div><span>50</span></div><div class="setting-row"><div><b>Clipboard permission</b><p>Paste needs browser permission and a direct button press.</p></div><span>Required</span></div></section>

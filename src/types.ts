@@ -11,6 +11,7 @@ export interface ClipboardItem {
   width: number | null
   height: number | null
   mimeType: string | null
+  pinned: boolean
   objectKey?: string | null
   chunkCount?: number
 }

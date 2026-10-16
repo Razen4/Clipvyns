@@ -9,6 +9,7 @@ use crate::{
 };
 
 const INITIAL_MIGRATION: &str = include_str!("../migrations/0001_clipboard_items.sql");
+const PINNED_MIGRATION: &str = include_str!("../migrations/0002_add_pinned.sql");
 
 #[derive(Clone, Debug)]
 pub struct Database {
@@ -27,6 +28,7 @@ pub struct NewItem<'a> {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub mime_type: Option<&'a str>,
+    pub pinned: bool,
 }
 
 impl Database {
@@ -50,6 +52,20 @@ impl Database {
             transaction.execute("INSERT INTO schema_migrations (version) VALUES (1)", [])?;
             transaction.commit()?;
         }
+        let pinned_migrated = connection
+            .query_row(
+                "SELECT 1 FROM schema_migrations WHERE version = 2",
+                [],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !pinned_migrated {
+            let transaction = connection.unchecked_transaction()?;
+            transaction.execute_batch(PINNED_MIGRATION)?;
+            transaction.execute("INSERT INTO schema_migrations (version) VALUES (2)", [])?;
+            transaction.commit()?;
+        }
         Ok(database)
     }
 
@@ -66,8 +82,8 @@ impl Database {
         connection.execute(
             "INSERT INTO clipboard_items (
                 id, kind, text_content, image_path, thumbnail_path, content_hash,
-                created_at, source_device, width, height, mime_type
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                created_at, source_device, width, height, mime_type, pinned
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT(content_hash) DO UPDATE SET
                 created_at = excluded.created_at,
                 source_device = excluded.source_device",
@@ -83,6 +99,7 @@ impl Database {
                 new_item.width,
                 new_item.height,
                 new_item.mime_type,
+                new_item.pinned,
             ],
         )?;
         self.find_by_hash(new_item.content_hash)?
@@ -93,7 +110,7 @@ impl Database {
         let connection = self.open()?;
         let mut statement = connection.prepare(
             "SELECT id, kind, text_content, image_path, thumbnail_path, content_hash,
-                    created_at, source_device, width, height, mime_type
+                    created_at, source_device, width, height, mime_type, pinned
              FROM clipboard_items WHERE content_hash = ?1",
         )?;
         statement
@@ -106,7 +123,7 @@ impl Database {
         let connection = self.open()?;
         let mut statement = connection.prepare(
             "SELECT id, kind, text_content, image_path, thumbnail_path, content_hash,
-                    created_at, source_device, width, height, mime_type
+                    created_at, source_device, width, height, mime_type, pinned
              FROM clipboard_items WHERE id = ?1",
         )?;
         statement
@@ -121,7 +138,7 @@ impl Database {
         let item = {
             let mut statement = transaction.prepare(
                 "SELECT id, kind, text_content, image_path, thumbnail_path, content_hash,
-                        created_at, source_device, width, height, mime_type
+                        created_at, source_device, width, height, mime_type, pinned
                  FROM clipboard_items WHERE id = ?1",
             )?;
             statement.query_row([id], map_stored_item).optional()?
@@ -138,12 +155,12 @@ impl Database {
         let normalized = format!("%{}%", escape_like(&query.to_lowercase()));
         let mut statement = connection.prepare(
             "SELECT id, kind, text_content, image_path, thumbnail_path, content_hash,
-                    created_at, source_device, width, height, mime_type
+                    created_at, source_device, width, height, mime_type, pinned
              FROM clipboard_items
              WHERE ?1 = '%%'
                 OR lower(COALESCE(text_content, '')) LIKE ?1 ESCAPE '\\'
                 OR lower(source_device) LIKE ?1 ESCAPE '\\'
-             ORDER BY created_at DESC
+             ORDER BY pinned DESC, created_at DESC
              LIMIT 50",
         )?;
         let rows = statement.query_map([normalized], map_stored_item)?;
@@ -162,6 +179,32 @@ impl Database {
         })
         .collect()
     }
+
+    pub fn set_pinned_by_id(&self, id: &str, pinned: bool) -> Result<(), AppError> {
+        let connection = self.open()?;
+        connection.execute(
+            "UPDATE clipboard_items SET pinned = ?1 WHERE id = ?2",
+            params![pinned, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_pinned_by_hash(&self, content_hash: &str, pinned: bool) -> Result<(), AppError> {
+        let connection = self.open()?;
+        connection.execute(
+            "UPDATE clipboard_items SET pinned = ?1 WHERE content_hash = ?2",
+            params![pinned, content_hash],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_by_hash(&self, content_hash: &str) -> Result<Option<StoredItem>, AppError> {
+        let item = self.find_by_hash(content_hash)?;
+        if let Some(item) = &item {
+            self.delete_by_id(&item.item.id)?;
+        }
+        Ok(item)
+    }
 }
 
 fn map_stored_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredItem> {
@@ -177,6 +220,7 @@ fn map_stored_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredItem> {
             width: row.get(8)?,
             height: row.get(9)?,
             mime_type: row.get(10)?,
+            pinned: row.get(11)?,
         },
         image_path: row.get(3)?,
         thumbnail_path: row.get(4)?,
@@ -213,6 +257,7 @@ mod tests {
             width: None,
             height: None,
             mime_type: Some("text/plain"),
+            pinned: false,
         }
     }
 

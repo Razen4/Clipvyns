@@ -1,12 +1,13 @@
 import { defineStore } from 'pinia'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
-import { deleteClipboardItem, getLocalDeviceInfo, listClipboardItems, pasteClipboardItem, type LocalDeviceInfo } from '../services/clipboard'
-import { DEVICE_HEARTBEAT_INTERVAL_MS, observeRemoteClipboardItems, publishClipboardItem, publishDevicePresence, publishRecentClipboardItems } from '../services/firebase'
+import { deleteClipboardItem, getLocalDeviceInfo, listClipboardItems, pasteClipboardItem, setClipboardItemPinned, type LocalDeviceInfo } from '../services/clipboard'
+import { DEVICE_HEARTBEAT_INTERVAL_MS, deleteSyncedClipboardItem, observeRemoteClipboardItems, publishClipboardItem, publishDevicePresence, publishRecentClipboardItems, setSyncedClipboardItemPinned } from '../services/firebase'
 import type { ClipboardItem } from '../types'
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 let presenceTimer: ReturnType<typeof setInterval> | undefined
+let pasteNoticeTimer: ReturnType<typeof setTimeout> | undefined
 
 export const useClipboardStore = defineStore('clipboard', {
   state: () => ({
@@ -15,6 +16,7 @@ export const useClipboardStore = defineStore('clipboard', {
     loading: true,
     restoringId: null as string | null,
     pasteNotice: null as string | null,
+    pasteNoticeKind: null as 'success' | 'warning' | null,
     deletingId: null as string | null,
     error: null as string | null,
     unlisten: null as UnlistenFn | null,
@@ -111,10 +113,17 @@ export const useClipboardStore = defineStore('clipboard', {
       this.restoringId = id
       this.error = null
       this.pasteNotice = null
+      this.pasteNoticeKind = null
+      if (pasteNoticeTimer) clearTimeout(pasteNoticeTimer)
       try {
         const result = await pasteClipboardItem(id)
         if (result.permissionRequired) {
           this.pasteNotice = 'Copied to the clipboard. To paste automatically, allow Clipboard Sharings in macOS System Settings > Privacy & Security > Accessibility, reopen the app, then try again. Until then, switch to the destination and press ⌘V.'
+          this.pasteNoticeKind = 'warning'
+        } else if (result.pasted) {
+          this.pasteNotice = '✓ Copied to clipboard'
+          this.pasteNoticeKind = 'success'
+          pasteNoticeTimer = setTimeout(() => { this.pasteNotice = null; this.pasteNoticeKind = null }, 2200)
         }
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
@@ -127,6 +136,8 @@ export const useClipboardStore = defineStore('clipboard', {
       this.deletingId = id
       this.error = null
       try {
+        const item = this.items.find((entry) => entry.id === id)
+        if (item && this.syncUserId) await deleteSyncedClipboardItem(this.syncUserId, item)
         await deleteClipboardItem(id)
         this.items = this.items.filter((item) => item.id !== id)
       } catch (error) {
@@ -134,6 +145,20 @@ export const useClipboardStore = defineStore('clipboard', {
         await this.refresh()
       } finally {
         this.deletingId = null
+      }
+    },
+    async togglePinned(id: string) {
+      const item = this.items.find((entry) => entry.id === id)
+      if (!item) return
+      const pinned = !item.pinned
+      this.error = null
+      try {
+        if (this.syncUserId) await setSyncedClipboardItemPinned(this.syncUserId, item, pinned)
+        await setClipboardItemPinned(id, pinned)
+        item.pinned = pinned
+        this.items.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt - a.createdAt)
+      } catch (error) {
+        this.error = error instanceof Error ? error.message : String(error)
       }
     },
   },
