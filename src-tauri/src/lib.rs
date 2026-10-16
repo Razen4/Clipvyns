@@ -84,9 +84,10 @@ async fn paste_clipboard_item(
     clipboard::restore_item(&state, item)?;
     leave_foreground_for_paste(&app, &window)?;
 
-    let paste_result = tauri::async_runtime::spawn_blocking(|| {
+    let app_for_paste = app.clone();
+    let paste_result = tauri::async_runtime::spawn_blocking(move || {
         std::thread::sleep(std::time::Duration::from_millis(450));
-        clipboard::paste_shortcut()
+        paste_shortcut_on_main_thread(&app_for_paste)
     })
     .await
     .map_err(|error| AppError::Message(format!("native paste task failed: {error}")))?;
@@ -108,6 +109,26 @@ async fn paste_clipboard_item(
             Err(error)
         }
     }
+}
+
+fn paste_shortcut_on_main_thread(
+    app: &tauri::AppHandle,
+) -> Result<(), clipboard::PasteShortcutError> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    app.run_on_main_thread(move || {
+        let _ = sender.send(clipboard::paste_shortcut());
+    })
+    .map_err(|error| {
+        clipboard::PasteShortcutError::Other(AppError::Message(format!(
+            "could not schedule native paste on the main thread: {error}"
+        )))
+    })?;
+
+    receiver.recv().map_err(|_| {
+        clipboard::PasteShortcutError::Other(AppError::Message(
+            "the application closed before native paste could run".into(),
+        ))
+    })?
 }
 
 #[tauri::command]
