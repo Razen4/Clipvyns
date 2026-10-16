@@ -15,7 +15,7 @@ Local clipboard history includes:
 - per-item deletion with removal of associated local image files;
 - a compact keyboard-accessible Vue/Pinia interface with loading, empty, and error states.
 
-When signed in to the same Firebase account, text and PNG clipboard images sync between macOS and Windows. PNG data is split into bounded Firestore documents so no Cloudflare service or Firebase Storage bucket is required. Global shortcuts, tray/menu-bar behavior, autostart, private mode, and pause controls are not implemented.
+When signed in to the same Firebase account, text and PNG clipboard images sync between macOS and Windows. PNG data is split into bounded Firestore documents so no Cloudflare service or Firebase Storage bucket is required. Settings can enable or disable launch at login on macOS and Windows. Tray/menu-bar behavior, private mode, and pause controls are not implemented.
 
 ## Prerequisites
 
@@ -127,11 +127,11 @@ Image chunks are saved privately under each Firebase user; the included rules on
 
 ## Security and configuration
 
-The Tauri capability grants only `core:default`; clipboard and filesystem access occur inside the Rust process rather than through frontend plugins.
+The Tauri capability grants core commands plus the explicitly needed global-shortcut and autostart plugin commands; clipboard and filesystem access occur inside the Rust process rather than through frontend plugins.
 
 ## Roadmap boundaries
 
-- Phase 2: global shortcuts, tray/menu bar, autostart, and native-paste permissions.
+- Phase 2: tray/menu bar, private mode, pause controls, and native-paste permissions.
 - Durable sync queue, retry/backoff, pause/private modes, cleanup, and encryption lifecycle.
 - macOS/Windows integration matrices, platform packaging, and release documentation.
 # Clipboard-Sharings

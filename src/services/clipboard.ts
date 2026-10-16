@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
 
 import type { ClipboardItem } from '../types'
 
@@ -13,6 +14,14 @@ export function getLocalDeviceInfo(): Promise<LocalDeviceInfo> {
 
 export function revealDesktopApplication(): Promise<void> {
   return invoke('reveal_application')
+}
+
+export function isLaunchAtLoginEnabled(): Promise<boolean> {
+  return isEnabled()
+}
+
+export function setLaunchAtLogin(enabled: boolean): Promise<void> {
+  return enabled ? enable() : disable()
 }
 
 export function listClipboardItems(query: string): Promise<ClipboardItem[]> {

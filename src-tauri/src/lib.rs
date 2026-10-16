@@ -111,10 +111,7 @@ async fn paste_clipboard_item(
 }
 
 #[tauri::command]
-fn reveal_application(
-    app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
-) -> Result<(), AppError> {
+fn reveal_application(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<(), AppError> {
     #[cfg(target_os = "macos")]
     app.show().map_err(tauri_error)?;
     window.show().map_err(tauri_error)?;
@@ -321,7 +318,9 @@ fn tauri_error(error: tauri::Error) -> AppError {
 pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+    let builder = builder
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_autostart::Builder::new().build());
 
     builder
         .setup(|app| {
