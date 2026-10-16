@@ -112,14 +112,18 @@ function deviceId(): string {
   }
 }
 
-export async function publishDevicePresence(uid: string, appKind: 'Web' | 'Desktop'): Promise<void> {
+export async function publishDevicePresence(
+  uid: string,
+  appKind: 'Web' | 'Desktop',
+  device?: { name: string; platform: string },
+): Promise<void> {
   if (!firestore) return
-  const platform = navigator.platform || 'Unknown platform'
+  const platform = device?.platform || navigator.platform || 'Unknown platform'
   const id = deviceId()
   await setDoc(doc(userDevices(uid), id), {
     id,
     ownerUid: uid,
-    name: `${appKind} · ${platform}`,
+    name: device?.name || `${appKind} · ${platform}`,
     platform,
     appKind,
     lastSeen: Date.now(),

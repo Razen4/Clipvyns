@@ -24,6 +24,13 @@ struct AppState {
     last_observed_hash: Arc<Mutex<Option<String>>>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalDeviceInfo {
+    name: String,
+    platform: String,
+}
+
 #[derive(Debug, Error)]
 enum AppError {
     #[error("{0}")]
@@ -56,11 +63,19 @@ fn list_clipboard_items(
 }
 
 #[tauri::command]
+fn get_local_device_info() -> LocalDeviceInfo {
+    LocalDeviceInfo {
+        name: host_name(),
+        platform: platform_name().into(),
+    }
+}
+
+#[tauri::command]
 async fn paste_clipboard_item(
     window: tauri::WebviewWindow,
     state: State<'_, AppState>,
     id: String,
-) -> Result<(), AppError> {
+) -> Result<PasteResult, AppError> {
     let item = state
         .database
         .find_by_id(&id)?
@@ -75,11 +90,30 @@ async fn paste_clipboard_item(
     .await
     .map_err(|error| AppError::Message(format!("native paste task failed: {error}")))?;
 
-    if let Err(error) = paste_result {
-        restore_after_failed_paste(&window);
-        return Err(error);
+    match paste_result {
+        Ok(()) => Ok(PasteResult {
+            pasted: true,
+            permission_required: false,
+        }),
+        Err(clipboard::PasteShortcutError::PermissionRequired) => {
+            restore_after_failed_paste(&window);
+            Ok(PasteResult {
+                pasted: false,
+                permission_required: true,
+            })
+        }
+        Err(clipboard::PasteShortcutError::Other(error)) => {
+            restore_after_failed_paste(&window);
+            Err(error)
+        }
     }
-    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PasteResult {
+    pasted: bool,
+    permission_required: bool,
 }
 
 #[tauri::command]
@@ -277,6 +311,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_local_device_info,
             list_clipboard_items,
             paste_clipboard_item,
             delete_clipboard_item,
@@ -289,10 +324,22 @@ pub fn run() {
 }
 
 fn device_name() -> String {
-    let hostname = hostname::get()
+    format!("{} · {}", host_name(), platform_name())
+}
+
+fn host_name() -> String {
+    hostname::get()
         .ok()
         .and_then(|value| value.into_string().ok())
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "This device".into());
-    format!("{} · {}", hostname, std::env::consts::OS)
+        .unwrap_or_else(|| "This device".into())
+}
+
+fn platform_name() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "macOS",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        other => other,
+    }
 }

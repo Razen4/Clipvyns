@@ -2,11 +2,25 @@ import { invoke } from '@tauri-apps/api/core'
 
 import type { ClipboardItem } from '../types'
 
+export interface LocalDeviceInfo {
+  name: string
+  platform: string
+}
+
+export function getLocalDeviceInfo(): Promise<LocalDeviceInfo> {
+  return invoke('get_local_device_info')
+}
+
 export function listClipboardItems(query: string): Promise<ClipboardItem[]> {
   return invoke('list_clipboard_items', { query })
 }
 
-export function pasteClipboardItem(id: string): Promise<void> {
+export interface PasteResult {
+  pasted: boolean
+  permissionRequired: boolean
+}
+
+export function pasteClipboardItem(id: string): Promise<PasteResult> {
   return invoke('paste_clipboard_item', { id })
 }
 

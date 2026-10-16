@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
-import { deleteClipboardItem, listClipboardItems, pasteClipboardItem } from '../services/clipboard'
+import { deleteClipboardItem, getLocalDeviceInfo, listClipboardItems, pasteClipboardItem, type LocalDeviceInfo } from '../services/clipboard'
 import { DEVICE_HEARTBEAT_INTERVAL_MS, observeRemoteClipboardItems, publishClipboardItem, publishDevicePresence, publishRecentClipboardItems } from '../services/firebase'
 import type { ClipboardItem } from '../types'
 
@@ -14,6 +14,7 @@ export const useClipboardStore = defineStore('clipboard', {
     query: '',
     loading: true,
     restoringId: null as string | null,
+    pasteNotice: null as string | null,
     deletingId: null as string | null,
     error: null as string | null,
     unlisten: null as UnlistenFn | null,
@@ -60,9 +61,15 @@ export const useClipboardStore = defineStore('clipboard', {
         },
       )
       try {
-        await publishDevicePresence(uid, 'Desktop')
+        let deviceInfo: LocalDeviceInfo | undefined
+        try {
+          deviceInfo = await getLocalDeviceInfo()
+        } catch {
+          // Presence can still use the browser platform if native device metadata is unavailable.
+        }
+        await publishDevicePresence(uid, 'Desktop', deviceInfo)
         presenceTimer = setInterval(() => {
-          publishDevicePresence(uid, 'Desktop').catch((error) => {
+          publishDevicePresence(uid, 'Desktop', deviceInfo).catch((error) => {
             this.syncError = error instanceof Error ? error.message : String(error)
           })
         }, DEVICE_HEARTBEAT_INTERVAL_MS)
@@ -103,8 +110,12 @@ export const useClipboardStore = defineStore('clipboard', {
       if (this.restoringId) return
       this.restoringId = id
       this.error = null
+      this.pasteNotice = null
       try {
-        await pasteClipboardItem(id)
+        const result = await pasteClipboardItem(id)
+        if (result.permissionRequired) {
+          this.pasteNotice = 'Copied to the clipboard. To paste automatically, allow Clipboard Sharings in macOS System Settings > Privacy & Security > Accessibility, reopen the app, then try again. Until then, switch to the destination and press ⌘V.'
+        }
       } catch (error) {
         this.error = error instanceof Error ? error.message : String(error)
       } finally {

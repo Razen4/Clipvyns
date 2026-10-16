@@ -7,7 +7,7 @@ use std::{
 };
 
 use arboard::{Clipboard, ImageData};
-use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+use enigo::{Direction, Enigo, Key, Keyboard, NewConError, Settings};
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter};
@@ -194,12 +194,21 @@ pub fn restore_item(state: &AppState, stored: StoredItem) -> Result<(), AppError
     Ok(())
 }
 
-pub fn paste_shortcut() -> Result<(), AppError> {
-    let mut keyboard = Enigo::new(&Settings::default()).map_err(|error| {
-        AppError::Message(format!(
-            "cannot create native input controller: {error}. On macOS, allow Clipboard Sharings in System Settings > Privacy & Security > Accessibility, then reopen the app"
-        ))
-    })?;
+pub enum PasteShortcutError {
+    PermissionRequired,
+    Other(AppError),
+}
+
+pub fn paste_shortcut() -> Result<(), PasteShortcutError> {
+    let mut keyboard = match Enigo::new(&Settings::default()) {
+        Ok(keyboard) => keyboard,
+        Err(NewConError::NoPermission) => return Err(PasteShortcutError::PermissionRequired),
+        Err(error) => {
+            return Err(PasteShortcutError::Other(AppError::Message(format!(
+                "cannot create native input controller: {error}"
+            ))));
+        }
+    };
 
     #[cfg(target_os = "macos")]
     let modifier = Key::Meta;
@@ -208,21 +217,19 @@ pub fn paste_shortcut() -> Result<(), AppError> {
 
     keyboard
         .key(modifier, Direction::Press)
-        .map_err(input_error)?;
+        .map_err(|error| PasteShortcutError::Other(input_error(error)))?;
     let paste_result = keyboard
         .key(Key::Unicode('v'), Direction::Click)
-        .map_err(input_error);
+        .map_err(|error| PasteShortcutError::Other(input_error(error)));
     let release_result = keyboard
         .key(modifier, Direction::Release)
-        .map_err(input_error);
+        .map_err(|error| PasteShortcutError::Other(input_error(error)));
     paste_result?;
     release_result
 }
 
 fn input_error(error: enigo::InputError) -> AppError {
-    AppError::Message(format!(
-        "native paste was blocked: {error}. On macOS, allow Clipboard Sharings in System Settings > Privacy & Security > Accessibility"
-    ))
+    AppError::Message(format!("native paste was blocked: {error}"))
 }
 
 pub(crate) fn write_png_atomically(
