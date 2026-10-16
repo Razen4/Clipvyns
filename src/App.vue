@@ -14,7 +14,6 @@ const auth = useAuthStore()
 const activeSection = ref<'clipboard' | 'devices' | 'settings'>('clipboard')
 const filter = ref<'all' | 'image' | 'text'>('all')
 const selectedId = ref<string | null>(null)
-const mobilePreviewOpen = ref(false)
 const loginOpen = ref(false)
 const email = ref('')
 const password = ref('')
@@ -66,14 +65,13 @@ async function submitAuth() {
   } catch { /* exposed by the auth store */ }
 }
 
-function selectItem(item: ClipboardItem) {
+function pasteItem(item: ClipboardItem) {
   selectedId.value = item.id
-  if (window.matchMedia('(max-width: 1279px)').matches) mobilePreviewOpen.value = true
+  void store.paste(item.id)
 }
 
 function showSection(section: 'clipboard' | 'devices' | 'settings') {
   activeSection.value = section
-  mobilePreviewOpen.value = false
 }
 
 function onSearch(event: Event) { store.scheduleSearch((event.target as HTMLInputElement).value) }
@@ -221,16 +219,12 @@ onBeforeUnmount(() => {
       <div v-if="store.pasteNotice" class="paste-notice"><span>{{ store.pasteNotice }}</span><button type="button" aria-label="Dismiss paste notice" @click="store.pasteNotice = null">×</button></div>
 
       <template v-if="activeSection === 'clipboard'">
-        <div class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
-          <section class="panel web-list">
-            <div class="mb-5 flex gap-2"><button v-for="tab in [['all','All'],['image','Images'],['text','Text']] as const" :key="tab[0]" class="filter" :class="filter === tab[0] && 'selected'" @click="filter = tab[0]">{{ tab[1] }}</button></div>
-            <p v-if="store.error" class="list-error">{{ store.error }}</p>
-            <div v-if="store.loading || !visibleItems.length" class="empty">{{ store.loading ? 'Loading clipboard…' : store.query ? 'No matching clipboard items.' : 'Copy text or an image and it will appear here.' }}</div>
-            <div v-else class="space-y-3"><button v-for="item in visibleItems" :key="item.id" class="clip" :class="selectedId === item.id && 'clip-selected'" @click="selectItem(item)"><div class="thumb" :class="item.kind === 'text' && 'text-thumb'"><img v-if="item.previewDataUrl" :src="item.previewDataUrl" alt="Clipboard preview" /><span v-else>{{ item.kind === 'image' ? '▧' : '≡' }}</span></div><div class="min-w-0 flex-1 text-left"><b :class="item.kind === 'text' ? 'text-preview' : 'block truncate'">{{ item.kind === 'image' ? `Image · ${item.width} × ${item.height}` : item.textContent }}</b><p v-if="item.kind === 'image'" class="mt-1 truncate text-sm text-slate-400">PNG image</p><p class="mt-2 text-xs text-slate-500">● {{ item.sourceDevice }} · {{ age(item.createdAt) }}</p></div><span class="badge">{{ item.kind }}</span></button></div>
-          </section>
-          <aside class="panel web-detail"><template v-if="selected"><div class="mb-4 flex justify-between"><b>{{ selected.kind === 'image' ? `Image · ${selected.width} × ${selected.height}` : 'Text item' }}</b><span class="badge">{{ selected.kind }}</span></div><div class="preview"><img v-if="selected.previewDataUrl" :src="selected.previewDataUrl" alt="Selected preview" /><p v-else>{{ selected.textContent }}</p></div><dl class="info"><div><dt>Device</dt><dd>{{ selected.sourceDevice }}</dd></div><div><dt>Type</dt><dd>{{ selected.mimeType }}</dd></div><div><dt>Copied</dt><dd>{{ new Date(selected.createdAt).toLocaleString() }}</dd></div></dl><div class="detail-actions"><button class="primary" :disabled="store.restoringId === selected.id" @click="store.paste(selected.id)">{{ store.restoringId === selected.id ? 'Pasting…' : 'Paste item' }}</button><button class="delete-action" :disabled="store.deletingId === selected.id" @click="store.remove(selected.id)">{{ store.deletingId === selected.id ? 'Deleting…' : 'Delete' }}</button></div></template><div v-else class="empty">Select an item to view details.</div></aside>
-        </div>
-        <aside v-if="selected && mobilePreviewOpen" class="mobile-preview-sheet xl:hidden"><div class="flex items-center justify-between"><b>Preview</b><button aria-label="Close preview" @click="mobilePreviewOpen = false">×</button></div><img v-if="selected.previewDataUrl" :src="selected.previewDataUrl" alt="Selected preview" /><p v-else>{{ selected.textContent }}</p><div class="detail-actions"><button class="primary" @click="store.paste(selected.id)">Paste item</button><button class="delete-action" @click="store.remove(selected.id)">Delete</button></div></aside>
+        <section class="panel web-list">
+          <div class="mb-5 flex gap-2"><button v-for="tab in [['all','All'],['image','Images'],['text','Text']] as const" :key="tab[0]" class="filter" :class="filter === tab[0] && 'selected'" @click="filter = tab[0]">{{ tab[1] }}</button></div>
+          <p v-if="store.error" class="list-error">{{ store.error }}</p>
+          <div v-if="store.loading || !visibleItems.length" class="empty">{{ store.loading ? 'Loading clipboard…' : store.query ? 'No matching clipboard items.' : 'Copy text or an image and it will appear here.' }}</div>
+          <div v-else class="space-y-3"><article v-for="item in visibleItems" :key="item.id" class="clip-row"><button class="clip" :class="selectedId === item.id && 'clip-selected'" :disabled="store.restoringId === item.id" @click="pasteItem(item)"><div class="thumb" :class="item.kind === 'text' && 'text-thumb'"><img v-if="item.previewDataUrl" :src="item.previewDataUrl" alt="Clipboard preview" /><span v-else>{{ item.kind === 'image' ? '▧' : '≡' }}</span></div><div class="min-w-0 flex-1 text-left"><b :class="item.kind === 'text' ? 'text-preview' : 'block truncate'">{{ item.kind === 'image' ? `Image · ${item.width} × ${item.height}` : item.textContent }}</b><p v-if="item.kind === 'image'" class="mt-1 truncate text-sm text-slate-400">PNG image</p><p class="mt-2 text-xs text-slate-500">● {{ item.sourceDevice }} · {{ age(item.createdAt) }}</p></div><span class="badge">{{ store.restoringId === item.id ? 'Pasting…' : item.kind }}</span></button><button type="button" class="clip-delete" :disabled="store.deletingId === item.id" aria-label="Delete clipboard item" title="Delete clipboard item" @click="store.remove(item.id)"><svg v-if="store.deletingId !== item.id" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M9 7l1-2h4l1 2m-8 0 1 13h8l1-13" /></svg><span v-else class="delete-spinner" aria-hidden="true" /></button></article></div>
+        </section>
       </template>
 
       <section v-else-if="activeSection === 'devices'" class="panel devices-panel"><div v-if="!auth.signedIn" class="empty">Sign in to see connected devices.</div><div v-else-if="deviceError" class="empty">Device sync error: {{ deviceError }}</div><div v-else-if="!devices.length" class="empty">No device heartbeat yet.</div><div v-else class="space-y-3"><article v-for="device in devices" :key="device.id" class="device-card"><div class="device-icon">{{ device.platform.toLowerCase().includes('win') ? '⊞' : device.platform.toLowerCase().includes('mac') ? '⌘' : '◫' }}</div><div class="min-w-0 flex-1"><b class="block truncate">{{ device.name }}</b><p class="mt-1 text-sm text-slate-400">{{ device.platform }}</p><p class="mt-2 text-xs" :class="deviceIsActive(device) ? 'text-emerald-400' : 'text-slate-500'">● {{ deviceIsActive(device) ? 'Active recently' : `Last seen ${age(device.lastSeen)}` }}</p></div><span class="badge" :class="deviceIsActive(device) ? 'device-online' : 'device-offline'">{{ deviceIsActive(device) ? 'Active' : 'Inactive' }}</span></article></div></section>
