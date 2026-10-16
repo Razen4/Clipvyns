@@ -72,6 +72,7 @@ fn get_local_device_info() -> LocalDeviceInfo {
 
 #[tauri::command]
 async fn paste_clipboard_item(
+    app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     state: State<'_, AppState>,
     id: String,
@@ -81,10 +82,10 @@ async fn paste_clipboard_item(
         .find_by_id(&id)?
         .ok_or_else(|| AppError::Message("clipboard item no longer exists".into()))?;
     clipboard::restore_item(&state, item)?;
-    minimize_for_paste(&window)?;
+    leave_foreground_for_paste(&app, &window)?;
 
     let paste_result = tauri::async_runtime::spawn_blocking(|| {
-        std::thread::sleep(std::time::Duration::from_millis(250));
+        std::thread::sleep(std::time::Duration::from_millis(450));
         clipboard::paste_shortcut()
     })
     .await
@@ -96,17 +97,29 @@ async fn paste_clipboard_item(
             permission_required: false,
         }),
         Err(clipboard::PasteShortcutError::PermissionRequired) => {
-            restore_after_failed_paste(&window);
+            restore_after_failed_paste(&app, &window);
             Ok(PasteResult {
                 pasted: false,
                 permission_required: true,
             })
         }
         Err(clipboard::PasteShortcutError::Other(error)) => {
-            restore_after_failed_paste(&window);
+            restore_after_failed_paste(&app, &window);
             Err(error)
         }
     }
+}
+
+#[tauri::command]
+fn reveal_application(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<(), AppError> {
+    #[cfg(target_os = "macos")]
+    app.show().map_err(tauri_error)?;
+    window.show().map_err(tauri_error)?;
+    window.unminimize().map_err(tauri_error)?;
+    window.set_focus().map_err(tauri_error)
 }
 
 #[derive(Serialize)]
@@ -271,11 +284,27 @@ fn import_remote_image(
     Ok(())
 }
 
-fn minimize_for_paste(window: &tauri::WebviewWindow) -> Result<(), AppError> {
+#[cfg(target_os = "macos")]
+fn leave_foreground_for_paste(
+    app: &tauri::AppHandle,
+    _window: &tauri::WebviewWindow,
+) -> Result<(), AppError> {
+    app.hide().map_err(tauri_error)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn leave_foreground_for_paste(
+    _app: &tauri::AppHandle,
+    window: &tauri::WebviewWindow,
+) -> Result<(), AppError> {
     window.minimize().map_err(tauri_error)
 }
 
-fn restore_after_failed_paste(window: &tauri::WebviewWindow) {
+fn restore_after_failed_paste(app: &tauri::AppHandle, window: &tauri::WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    if let Err(error) = app.show() {
+        eprintln!("failed to show app after paste error: {error}");
+    }
     if let Err(error) = window.unminimize() {
         eprintln!("failed to restore window after paste error: {error}");
     }
@@ -312,6 +341,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_local_device_info,
+            reveal_application,
             list_clipboard_items,
             paste_clipboard_item,
             delete_clipboard_item,

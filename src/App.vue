@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Unsubscribe } from 'firebase/firestore'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { isRegistered, register, unregister, type ShortcutEvent } from '@tauri-apps/plugin-global-shortcut'
 
 import { DEVICE_ACTIVE_WINDOW_MS, observeDevices, type ConnectedDevice } from './services/firebase'
+import { revealDesktopApplication } from './services/clipboard'
 import { useAuthStore } from './stores/auth'
 import { useClipboardStore } from './stores/clipboard'
 import type { ClipboardItem } from './types'
@@ -79,10 +79,7 @@ function age(value: number) { const min = Math.floor((Date.now() - value) / 6000
 
 async function revealApplication(event: ShortcutEvent) {
   if (event.state !== 'Pressed') return
-  const window = getCurrentWindow()
-  await window.show()
-  await window.unminimize()
-  await window.setFocus()
+  await revealDesktopApplication()
 }
 
 async function activateShortcut(nextShortcut: string): Promise<boolean> {

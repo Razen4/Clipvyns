@@ -11,6 +11,10 @@ export function getLocalDeviceInfo(): Promise<LocalDeviceInfo> {
   return invoke('get_local_device_info')
 }
 
+export function revealDesktopApplication(): Promise<void> {
+  return invoke('reveal_application')
+}
+
 export function listClipboardItems(query: string): Promise<ClipboardItem[]> {
   return invoke('list_clipboard_items', { query })
 }
