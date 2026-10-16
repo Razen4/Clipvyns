@@ -35,12 +35,29 @@ const profileInitial = computed(() => profileName.value.trim().charAt(0).toUpper
 
 watch(() => auth.user?.uid, (uid) => {
   stop?.(); stopDevices?.(); if (presenceTimer) clearInterval(presenceTimer)
+  stopDevices = null
   items.value = []; devices.value = []; selected.value = null; error.value = null; deviceError.value = null
   if (!uid) return
   loading.value = true
-  const sendPresence = () => publishDevicePresence(uid, 'Web').catch((reason) => { deviceError.value = reason instanceof Error ? reason.message : String(reason) })
-  sendPresence(); presenceTimer = setInterval(sendPresence, 30_000)
-  stopDevices = observeDevices(uid, (next) => { devices.value = next; deviceError.value = null }, (reason) => { deviceError.value = reason.message })
+  const connectDevices = () => {
+    if (stopDevices) return
+    stopDevices = observeDevices(uid, (next) => {
+      devices.value = next; deviceError.value = null
+    }, (reason) => {
+      deviceError.value = `Read devices: ${reason.message}`
+      stopDevices = null
+    })
+  }
+  const sendPresence = async () => {
+    try {
+      await publishDevicePresence(uid, 'Web')
+      deviceError.value = null
+      connectDevices()
+    } catch (reason) {
+      deviceError.value = `Update presence: ${reason instanceof Error ? reason.message : String(reason)}`
+    }
+  }
+  connectDevices(); sendPresence(); presenceTimer = setInterval(sendPresence, 30_000)
   stop = observeWebClipboardItems(uid, async (next) => {
     items.value = next; selected.value ??= next[0] ?? null
     for (const item of next.filter((entry) => entry.kind === 'image' && entry.chunkCount && !entry.previewDataUrl)) {
