@@ -82,6 +82,24 @@ service cloud.firestore {
       allow delete: if owns(userId);
     }
 
+    match /users/{userId}/devices/{deviceId} {
+      allow read: if owns(userId);
+      allow create, update: if owns(userId)
+        && request.resource.data.keys().hasOnly([
+          'id', 'ownerUid', 'name', 'platform', 'appKind', 'lastSeen', 'schemaVersion'
+        ])
+        && request.resource.data.id == deviceId
+        && request.resource.data.ownerUid == userId
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 256
+        && request.resource.data.platform is string
+        && request.resource.data.platform.size() <= 128
+        && (request.resource.data.appKind == 'Web' || request.resource.data.appKind == 'Desktop')
+        && request.resource.data.lastSeen is number
+        && request.resource.data.lastSeen > 0
+        && request.resource.data.schemaVersion == 1;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

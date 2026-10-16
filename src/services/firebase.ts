@@ -28,6 +28,15 @@ import type { ClipboardItem } from '../types'
 const IMAGE_CHUNK_CHARACTERS = 700_000
 const MAX_IMAGE_CHUNKS = 50
 const MAX_SYNC_IMAGE_BYTES = 25 * 1024 * 1024
+const ONLINE_WINDOW_MS = 90_000
+
+export interface ConnectedDevice {
+  id: string
+  name: string
+  platform: string
+  lastSeen: number
+  online: boolean
+}
 
 const requiredEnv = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -82,6 +91,54 @@ export async function requestPasswordReset(email: string): Promise<void> {
 function userItems(uid: string) {
   if (!firestore) throw new Error(firebaseConfigurationError ?? 'Firebase is not configured')
   return collection(firestore, 'users', uid, 'items')
+}
+
+function userDevices(uid: string) {
+  if (!firestore) throw new Error(firebaseConfigurationError ?? 'Firebase is not configured')
+  return collection(firestore, 'users', uid, 'devices')
+}
+
+function deviceId(): string {
+  const key = 'clipboard-device-id'
+  try {
+    const existing = localStorage.getItem(key)
+    if (existing) return existing
+    const created = crypto.randomUUID()
+    localStorage.setItem(key, created)
+    return created
+  } catch {
+    return crypto.randomUUID()
+  }
+}
+
+export async function publishDevicePresence(uid: string, appKind: 'Web' | 'Desktop'): Promise<void> {
+  if (!firestore) return
+  const platform = navigator.platform || 'Unknown platform'
+  const id = deviceId()
+  await setDoc(doc(userDevices(uid), id), {
+    id,
+    ownerUid: uid,
+    name: `${appKind} · ${platform}`,
+    platform,
+    appKind,
+    lastSeen: Date.now(),
+    schemaVersion: 1,
+  })
+}
+
+export function observeDevices(
+  uid: string,
+  callback: (devices: ConnectedDevice[]) => void,
+  onError: (error: Error) => void,
+): Unsubscribe {
+  return onSnapshot(userDevices(uid), (snapshot) => {
+    const devices = snapshot.docs.flatMap((entry) => {
+      const value = entry.data()
+      if (typeof value.id !== 'string' || typeof value.name !== 'string' || typeof value.platform !== 'string' || typeof value.lastSeen !== 'number') return []
+      return [{ id: value.id, name: value.name, platform: value.platform, lastSeen: value.lastSeen, online: Date.now() - value.lastSeen < ONLINE_WINDOW_MS }]
+    }).sort((a, b) => b.lastSeen - a.lastSeen)
+    callback(devices)
+  }, onError)
 }
 
 function imageChunkId(contentHash: string, index: number): string {
