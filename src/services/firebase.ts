@@ -28,7 +28,8 @@ import type { ClipboardItem } from '../types'
 const IMAGE_CHUNK_CHARACTERS = 700_000
 const MAX_IMAGE_CHUNKS = 50
 const MAX_SYNC_IMAGE_BYTES = 25 * 1024 * 1024
-const ONLINE_WINDOW_MS = 90_000
+export const DEVICE_HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000
+export const DEVICE_ACTIVE_WINDOW_MS = 12 * 60 * 1000
 
 export interface ConnectedDevice {
   id: string
@@ -135,7 +136,7 @@ export function observeDevices(
     const devices = snapshot.docs.flatMap((entry) => {
       const value = entry.data()
       if (typeof value.id !== 'string' || typeof value.name !== 'string' || typeof value.platform !== 'string' || typeof value.lastSeen !== 'number') return []
-      return [{ id: value.id, name: value.name, platform: value.platform, lastSeen: value.lastSeen, online: Date.now() - value.lastSeen < ONLINE_WINDOW_MS }]
+      return [{ id: value.id, name: value.name, platform: value.platform, lastSeen: value.lastSeen, online: Date.now() - value.lastSeen < DEVICE_ACTIVE_WINDOW_MS }]
     }).sort((a, b) => b.lastSeen - a.lastSeen)
     callback(devices)
   }, onError)

@@ -9,7 +9,8 @@ export default defineConfig({
   plugins: [
     vue(),
     tailwindcss(),
-    !isTauriBuild && VitePWA({
+    VitePWA({
+      disable: isTauriBuild,
       registerType: 'autoUpdate',
       includeAssets: ['icon.png'],
       manifest: {
@@ -29,7 +30,7 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,png,svg,ico}'],
       },
     }),
-  ].filter(Boolean),
+  ],
   clearScreen: false,
   server: {
     port: 1420,

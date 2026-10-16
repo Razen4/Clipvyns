@@ -256,7 +256,11 @@ fn tauri_error(error: tauri::Error) -> AppError {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_global_shortcut::Builder::new().build());
+
+    builder
         .setup(|app| {
             let app_data = app.path().app_data_dir()?;
             let image_directory = app_data.join("images");

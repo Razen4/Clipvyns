@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 import { deleteClipboardItem, listClipboardItems, pasteClipboardItem } from '../services/clipboard'
-import { observeRemoteClipboardItems, publishClipboardItem, publishDevicePresence, publishRecentClipboardItems } from '../services/firebase'
+import { DEVICE_HEARTBEAT_INTERVAL_MS, observeRemoteClipboardItems, publishClipboardItem, publishDevicePresence, publishRecentClipboardItems } from '../services/firebase'
 import type { ClipboardItem } from '../types'
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
@@ -65,7 +65,7 @@ export const useClipboardStore = defineStore('clipboard', {
           publishDevicePresence(uid, 'Desktop').catch((error) => {
             this.syncError = error instanceof Error ? error.message : String(error)
           })
-        }, 30_000)
+        }, DEVICE_HEARTBEAT_INTERVAL_MS)
         await publishRecentClipboardItems(uid)
         this.syncError = null
       } catch (error) {
