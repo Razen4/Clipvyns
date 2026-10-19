@@ -101,6 +101,5 @@ jobs:
           prerelease: false
           updaterJsonPreferNsis: true
           uploadUpdaterJson: true
-          uploadWorkflowArtifacts: true
-          workflowArtifactNamePattern: ${{ matrix.artifact_name }}
+          uploadWorkflowArtifacts: ${{ github.event_name == 'workflow_dispatch' }}
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
