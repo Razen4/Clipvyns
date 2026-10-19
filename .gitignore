@@ -12,4 +12,6 @@ worker/.wrangler/
 *.db
 *.db-shm
 *.db-wal
+*.key
+*.key.pub
 

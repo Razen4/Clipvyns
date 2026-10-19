@@ -1,6 +1,6 @@
 [package]
 name = "clipboard-sharings"
-version = "0.1.4"
+version = "0.1.5"
 description = "Private cross-platform clipboard history"
 authors = ["Clipboard Sharings contributors"]
 edition = "2024"
@@ -21,14 +21,19 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 hostname = "0.4.2"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
 sha2 = "0.10.9"
 tauri = { version = "2.12.3", features = [] }
 thiserror = "2.0.17"
 uuid = { version = "1.18.1", features = ["v4"] }
 tauri-plugin-autostart = "2.7.0"
+tauri-plugin-process = "2"
 
 [dev-dependencies]
 tempfile = "3.23.0"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-global-shortcut = "2.4.0"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"

@@ -184,14 +184,13 @@ fn update_clipboard_item_sync_metadata(
     pinned: bool,
 ) -> Result<(), AppError> {
     if created_at <= 0 || source_device.len() > 256 {
-        return Err(AppError::Message("remote clipboard metadata is invalid".into()));
+        return Err(AppError::Message(
+            "remote clipboard metadata is invalid".into(),
+        ));
     }
-    state.database.update_sync_metadata_by_hash(
-        &content_hash,
-        created_at,
-        &source_device,
-        pinned,
-    )
+    state
+        .database
+        .update_sync_metadata_by_hash(&content_hash, created_at, &source_device, pinned)
 }
 
 fn remove_item_files(item: model::StoredItem) {
@@ -389,7 +388,9 @@ fn tauri_error(error: tauri::Error) -> AppError {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build());
     #[cfg(desktop)]
     let builder = builder
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())

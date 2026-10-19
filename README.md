@@ -60,6 +60,7 @@ installers** workflow:
 - `VITE_FIREBASE_STORAGE_BUCKET`
 - `VITE_FIREBASE_MESSAGING_SENDER_ID`
 - `VITE_FIREBASE_APP_ID`
+- `TAURI_SIGNING_PRIVATE_KEY`
 
 With GitHub CLI installed and authenticated:
 
@@ -67,8 +68,44 @@ With GitHub CLI installed and authenticated:
 gh workflow run build-desktop.yml
 ```
 
-Download the completed installers from the workflow run's **Artifacts**
-section. Pushing a tag matching `v*` also starts the workflow automatically.
+Manual workflow runs store the completed installers in the run's **Artifacts**
+section. Pushing a version tag creates a public GitHub Release containing the
+installers, signed updater bundles, and `latest.json` used by installed clients.
+
+## Releases and automatic updates
+
+The desktop app checks for a signed update when it starts. Users can also open
+**Settings** and select **Check for updates**. When a release is available, the
+app downloads it with progress feedback, verifies its updater signature,
+installs it, and restarts.
+
+The updater signing private key is release infrastructure. Keep it outside the
+repository and back it up securely. This project's local key is stored at
+`%USERPROFILE%\.tauri\clipboard-sharings.key`; only its public key is checked
+into `src-tauri/tauri.conf.json`. Store the complete private-key text in the
+GitHub Actions secret named `TAURI_SIGNING_PRIVATE_KEY`.
+
+With GitHub CLI authenticated, set that secret once from PowerShell:
+
+```powershell
+Get-Content -Raw "$env:USERPROFILE\.tauri\clipboard-sharings.key" |
+  gh secret set TAURI_SIGNING_PRIVATE_KEY
+```
+
+Create a release from any development machine with:
+
+```sh
+npm run version:set -- 0.1.6
+git add .
+git commit -m "chore: release v0.1.6"
+git tag v0.1.6
+git push origin main v0.1.6
+```
+
+The workflow rejects a tag whose version does not match `package.json`,
+`package-lock.json`, `src-tauri/tauri.conf.json`, `Cargo.toml`, and `Cargo.lock`.
+Version `0.1.5` is the updater bootstrap release and must be installed manually;
+clients on that release can install later releases from inside the app.
 
 The local database and image directory are created beneath Tauri's per-user app-data directory. Typical locations are:
 

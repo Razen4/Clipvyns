@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import type { Unsubscribe } from 'firebase/firestore'
+import { getVersion } from '@tauri-apps/api/app'
 import { isRegistered, register, unregister, type ShortcutEvent } from '@tauri-apps/plugin-global-shortcut'
+import { relaunch } from '@tauri-apps/plugin-process'
+import { check, type Update } from '@tauri-apps/plugin-updater'
 
 import { DEVICE_ACTIVE_WINDOW_MS, observeDevices, type ConnectedDevice } from './services/firebase'
 import { isLaunchAtLoginEnabled, revealDesktopApplication, setLaunchAtLogin } from './services/clipboard'
@@ -32,6 +35,13 @@ const shortcutBusy = ref(false)
 const launchAtLoginEnabled = ref(false)
 const launchAtLoginBusy = ref(false)
 const launchAtLoginError = ref<string | null>(null)
+const appVersion = ref('…')
+const availableUpdate = shallowRef<Update | null>(null)
+const updateStatus = ref<'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'error'>('idle')
+const updateError = ref<string | null>(null)
+const updateNotice = ref<string | null>(null)
+const updateDownloaded = ref(0)
+const updateTotal = ref<number | null>(null)
 let stopDevices: Unsubscribe | null = null
 let clockTimer: ReturnType<typeof setInterval> | null = null
 let activeShortcut: string | null = null
@@ -42,6 +52,10 @@ const profileName = computed(() => auth.user?.displayName || auth.user?.email?.s
 const profileInitial = computed(() => profileName.value.trim().charAt(0).toUpperCase() || 'U')
 const syncReady = computed(() => auth.signedIn && store.remoteReady && !store.syncing && !store.syncError)
 const syncLabel = computed(() => !auth.signedIn ? 'Not signed in' : store.syncError ? 'Sync error' : syncReady.value ? 'Synced' : 'Syncing…')
+const updateBusy = computed(() => ['checking', 'downloading', 'installing'].includes(updateStatus.value))
+const updateProgress = computed(() => updateTotal.value
+  ? Math.min(100, Math.round(updateDownloaded.value / updateTotal.value * 100))
+  : null)
 
 watch(() => store.items, (items) => {
   if (!items.some((item) => item.id === selectedId.value)) selectedId.value = items[0]?.id ?? null
@@ -165,6 +179,46 @@ async function toggleLaunchAtLogin() {
   }
 }
 
+async function checkForApplicationUpdate(manual = true) {
+  if (updateBusy.value) return
+  updateStatus.value = 'checking'
+  updateError.value = null
+  updateNotice.value = null
+  try {
+    const nextUpdate = await check({ timeout: 15_000 })
+    if (availableUpdate.value && availableUpdate.value !== nextUpdate) {
+      await availableUpdate.value.close()
+    }
+    availableUpdate.value = nextUpdate
+    updateStatus.value = nextUpdate ? 'available' : 'idle'
+    if (!nextUpdate && manual) updateNotice.value = `Version ${appVersion.value} is up to date.`
+  } catch (error) {
+    updateStatus.value = 'error'
+    updateError.value = error instanceof Error ? error.message : String(error)
+  }
+}
+
+async function installApplicationUpdate() {
+  const update = availableUpdate.value
+  if (!update || updateBusy.value) return
+  updateStatus.value = 'downloading'
+  updateError.value = null
+  updateNotice.value = null
+  updateDownloaded.value = 0
+  updateTotal.value = null
+  try {
+    await update.downloadAndInstall((event) => {
+      if (event.event === 'Started') updateTotal.value = event.data.contentLength ?? null
+      if (event.event === 'Progress') updateDownloaded.value += event.data.chunkLength
+      if (event.event === 'Finished') updateStatus.value = 'installing'
+    }, { restartAfterInstall: true })
+    await relaunch()
+  } catch (error) {
+    updateStatus.value = 'error'
+    updateError.value = error instanceof Error ? error.message : String(error)
+  }
+}
+
 function onKeydown(event: KeyboardEvent) {
   if (loginOpen.value) {
     if (event.key === 'Escape') loginOpen.value = false
@@ -183,10 +237,15 @@ function onKeydown(event: KeyboardEvent) {
 onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
   clockTimer = setInterval(() => { now.value = Date.now() }, 60_000)
-  await Promise.all([store.initialize(), auth.initialize()])
+  await Promise.all([
+    store.initialize(),
+    auth.initialize(),
+    getVersion().then((version) => { appVersion.value = version }),
+  ])
   await loadLaunchAtLogin()
   if (auth.user) await store.startSync(auth.user.uid)
   if (shortcutEnabled.value) await activateShortcut(shortcutValue.value)
+  void checkForApplicationUpdate(false)
 })
 
 onBeforeUnmount(() => {
@@ -194,6 +253,7 @@ onBeforeUnmount(() => {
   stopDevices?.()
   if (clockTimer) clearInterval(clockTimer)
   if (activeShortcut) void unregister(activeShortcut)
+  if (availableUpdate.value && !updateBusy.value) void availableUpdate.value.close()
   store.dispose()
   auth.dispose()
 })
@@ -219,6 +279,25 @@ onBeforeUnmount(() => {
 
       <p v-if="store.syncError" class="mb-4 rounded-xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-200">{{ store.syncError }}</p>
       <div v-if="store.pasteNotice" class="paste-notice" :class="store.pasteNoticeKind === 'success' && 'copy-toast'" role="status" aria-live="polite"><span>{{ store.pasteNotice }}</span><button type="button" aria-label="Dismiss paste notice" @click="store.pasteNotice = null; store.pasteNoticeKind = null">×</button></div>
+
+      <section v-if="activeSection === 'settings' || availableUpdate" class="update-panel" aria-live="polite">
+        <div class="min-w-0 flex-1">
+          <b>{{ availableUpdate ? `Update ${availableUpdate.version} available` : `Application version ${appVersion}` }}</b>
+          <p v-if="availableUpdate?.body" class="update-notes">{{ availableUpdate.body }}</p>
+          <p v-else-if="updateStatus === 'checking'">Checking for updates…</p>
+          <p v-else-if="updateStatus === 'downloading'">Downloading update{{ updateProgress === null ? '…' : ` · ${updateProgress}%` }}</p>
+          <p v-else-if="updateStatus === 'installing'">Installing update…</p>
+          <p v-else-if="updateError" class="update-error">{{ updateError }}</p>
+          <p v-else>{{ updateNotice || 'Updates are verified before installation.' }}</p>
+          <div v-if="updateStatus === 'downloading'" class="update-progress"><span :style="{ width: `${updateProgress ?? 8}%` }" /></div>
+        </div>
+        <button v-if="availableUpdate" type="button" class="primary update-action" :disabled="updateBusy" @click="installApplicationUpdate">
+          {{ updateStatus === 'downloading' ? 'Downloading…' : updateStatus === 'installing' ? 'Installing…' : 'Update and restart' }}
+        </button>
+        <button v-else type="button" class="secondary update-action" :disabled="updateBusy" @click="checkForApplicationUpdate(true)">
+          {{ updateStatus === 'checking' ? 'Checking…' : 'Check for updates' }}
+        </button>
+      </section>
 
       <template v-if="activeSection === 'clipboard'">
         <section class="panel web-list">
