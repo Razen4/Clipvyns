@@ -193,8 +193,14 @@ async function checkForApplicationUpdate(manual = true) {
     updateStatus.value = nextUpdate ? 'available' : 'idle'
     if (!nextUpdate && manual) updateNotice.value = `Version ${appVersion.value} is up to date.`
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (message.includes('Could not fetch a valid release JSON')) {
+      updateStatus.value = 'idle'
+      if (manual) updateNotice.value = 'No published update is available yet.'
+      return
+    }
     updateStatus.value = 'error'
-    updateError.value = error instanceof Error ? error.message : String(error)
+    updateError.value = message
   }
 }
 
