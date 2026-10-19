@@ -1,8 +1,8 @@
 [package]
 name = "clipboard-sharings"
-version = "0.1.5"
+version = "0.1.6"
 description = "Private cross-platform clipboard history"
-authors = ["Clipboard Sharings contributors"]
+authors = ["Clipvyn contributors"]
 edition = "2024"
 rust-version = "1.90"
 

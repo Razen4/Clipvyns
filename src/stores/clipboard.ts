@@ -132,7 +132,7 @@ export const useClipboardStore = defineStore('clipboard', {
       try {
         const result = await pasteClipboardItem(id)
         if (result.permissionRequired) {
-          this.pasteNotice = 'Copied to the clipboard. To paste automatically, allow Clipboard Sharings in macOS System Settings > Privacy & Security > Accessibility, reopen the app, then try again. Until then, switch to the destination and press ⌘V.'
+          this.pasteNotice = 'Copied to the clipboard. To paste automatically, allow Clipvyn in macOS System Settings > Privacy & Security > Accessibility, reopen the app, then try again. Until then, switch to the destination and press ⌘V.'
           this.pasteNoticeKind = 'warning'
         } else if (result.pasted) {
           this.pasteNotice = '✓ Copied to clipboard'

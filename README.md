@@ -1,4 +1,4 @@
-# Clipboard Sharings
+# Clipvyn
 
 A compact macOS and Windows clipboard-history application built with Tauri 2, Vue 3, TypeScript, Pinia, Tailwind CSS, Rust, and SQLite.
 
@@ -134,14 +134,14 @@ cargo test --manifest-path src-tauri/Cargo.toml restores_text_and_image_to_nativ
 Manual clipboard smoke test:
 
 1. Start `npm run tauri dev`.
-2. Copy text in an application other than Clipboard Sharings and confirm it appears at the top within about one second.
+2. Copy text in an application other than Clipvyn and confirm it appears at the top within about one second.
 3. Copy a screenshot or image and confirm its thumbnail and dimensions appear.
 4. Enter a distinctive substring in Search and confirm unrelated rows disappear.
 5. Select text and image rows in turn; the Clipboard window should minimize and paste into the previous application automatically.
 6. Use Up/Down and Enter to navigate and paste without a mouse.
 7. Re-copy an earlier value and confirm its existing row moves to the top instead of creating a duplicate.
 
-On first automatic paste, macOS may request Accessibility permission. Enable Clipboard Sharings under **System Settings > Privacy & Security > Accessibility**, then reopen the application. Clipboard capture and ordinary restore do not require this permission; it is used only to synthesize Command+V.
+On first automatic paste, macOS may request Accessibility permission. Enable Clipvyn under **System Settings > Privacy & Security > Accessibility**, then reopen the application. Clipboard capture and ordinary restore do not require this permission; it is used only to synthesize Command+V.
 
 Windows clipboard behavior and packaging must be validated on a Windows 11 build host. Intel macOS compilation requires the `x86_64-apple-darwin` Rust target and an Intel host or suitable cross-build environment; it is not claimed by the Apple Silicon-only checks below.
 
@@ -171,4 +171,4 @@ The Tauri capability grants core commands plus the explicitly needed global-shor
 - Phase 2: tray/menu bar, private mode, pause controls, and native-paste permissions.
 - Durable sync queue, retry/backoff, pause/private modes, cleanup, and encryption lifecycle.
 - macOS/Windows integration matrices, platform packaging, and release documentation.
-# Clipboard-Sharings
+# Clipvyn

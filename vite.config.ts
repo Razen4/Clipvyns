@@ -14,8 +14,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icon.png'],
       manifest: {
-        name: 'MyClipboard',
-        short_name: 'Clipboard',
+        name: 'Clipvyn',
+        short_name: 'Clipvyn',
         description: 'Your private clipboard, synced across devices.',
         theme_color: '#0b1020',
         background_color: '#070c1b',
