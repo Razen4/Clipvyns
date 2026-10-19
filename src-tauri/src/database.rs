@@ -198,6 +198,23 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_sync_metadata_by_hash(
+        &self,
+        content_hash: &str,
+        created_at: i64,
+        source_device: &str,
+        pinned: bool,
+    ) -> Result<(), AppError> {
+        let connection = self.open()?;
+        connection.execute(
+            "UPDATE clipboard_items
+             SET created_at = ?1, source_device = ?2, pinned = ?3
+             WHERE content_hash = ?4",
+            params![created_at, source_device, pinned, content_hash],
+        )?;
+        Ok(())
+    }
+
     pub fn delete_by_hash(&self, content_hash: &str) -> Result<Option<StoredItem>, AppError> {
         let item = self.find_by_hash(content_hash)?;
         if let Some(item) = &item {
@@ -289,6 +306,14 @@ mod tests {
         assert_eq!(repeated.item.id, "old");
         assert_eq!(database.list("").unwrap()[0].id, "old");
         assert_eq!(database.list("").unwrap().len(), 3);
+
+        database
+            .update_sync_metadata_by_hash("hash-a", 400, "Remote Windows", true)
+            .unwrap();
+        let synced = database.find_by_hash("hash-a").unwrap().unwrap().item;
+        assert_eq!(synced.created_at, 400);
+        assert_eq!(synced.source_device, "Remote Windows");
+        assert!(synced.pinned);
     }
 
     #[test]

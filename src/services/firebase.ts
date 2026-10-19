@@ -14,16 +14,17 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   getFirestore,
-  limit,
   onSnapshot,
   orderBy,
   query,
   setDoc,
+  where,
   type Unsubscribe,
 } from 'firebase/firestore'
 
-import { deleteClipboardItemByHash, importRemoteImage, importRemoteTextItem, listClipboardItems, readLocalImage, setClipboardItemPinned } from './clipboard'
+import { deleteClipboardItemByHash, importRemoteImage, importRemoteTextItem, listClipboardItems, readLocalImage, updateClipboardItemSyncMetadata } from './clipboard'
 import type { ClipboardItem } from '../types'
 
 const IMAGE_CHUNK_CHARACTERS = 700_000
@@ -151,6 +152,29 @@ function imageChunkId(contentHash: string, index: number): string {
   return `${contentHash}_${index}`
 }
 
+function canonicalItemId(contentHash: string): string {
+  const hex = contentHash.toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(hex)) throw new Error('Clipboard item hash is invalid')
+  const variant = ((Number.parseInt(hex[16], 16) & 0x3) | 0x8).toString(16)
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`
+}
+
+function syncedItem(uid: string, contentHash: string) {
+  return doc(userItems(uid), canonicalItemId(contentHash))
+}
+
+async function itemDocumentsByHash(uid: string, contentHash: string) {
+  return getDocs(query(userItems(uid), where('contentHash', '==', contentHash)))
+}
+
+async function removeLegacyItemDocuments(uid: string, contentHash: string): Promise<void> {
+  const canonicalId = syncedItem(uid, contentHash).id
+  const matches = await itemDocumentsByHash(uid, contentHash)
+  await Promise.all(matches.docs
+    .filter((entry) => entry.id !== canonicalId)
+    .map((entry) => deleteDoc(entry.ref)))
+}
+
 async function uploadImageChunks(uid: string, contentHash: string, pngBase64: string): Promise<number> {
   if (!firestore) throw new Error(firebaseConfigurationError ?? 'Firebase is not configured')
   const chunks = Array.from(
@@ -188,9 +212,9 @@ export function observeWebClipboardItems(
   callback: (items: ClipboardItem[]) => void,
   onError: (error: Error) => void,
 ): Unsubscribe {
-  const recent = query(userItems(uid), orderBy('createdAt', 'desc'), limit(50))
+  const recent = query(userItems(uid), orderBy('createdAt', 'desc'))
   return onSnapshot(recent, (snapshot) => {
-    const items: ClipboardItem[] = []
+    const itemsByHash = new Map<string, ClipboardItem>()
     for (const entry of snapshot.docs) {
       const data = entry.data()
       if (
@@ -198,13 +222,15 @@ export function observeWebClipboardItems(
         typeof data.createdAt !== 'number' || typeof data.sourceDevice !== 'string'
       ) continue
       if (data.kind === 'text' && typeof data.textContent === 'string') {
-        items.push({ id: data.id, kind: 'text', textContent: data.textContent, previewDataUrl: null, contentHash: data.contentHash, createdAt: data.createdAt, sourceDevice: data.sourceDevice, width: null, height: null, mimeType: 'text/plain', pinned: data.pinned === true })
+        if (!itemsByHash.has(data.contentHash)) itemsByHash.set(data.contentHash, { id: data.id, kind: 'text', textContent: data.textContent, previewDataUrl: null, contentHash: data.contentHash, createdAt: data.createdAt, sourceDevice: data.sourceDevice, width: null, height: null, mimeType: 'text/plain', pinned: data.pinned === true })
       }
       if (data.kind === 'image' && typeof data.width === 'number' && typeof data.height === 'number' && typeof data.chunkCount === 'number') {
-        items.push({ id: data.id, kind: 'image', textContent: null, previewDataUrl: null, contentHash: data.contentHash, createdAt: data.createdAt, sourceDevice: data.sourceDevice, width: data.width, height: data.height, mimeType: 'image/png', pinned: data.pinned === true, chunkCount: data.chunkCount })
+        if (!itemsByHash.has(data.contentHash)) itemsByHash.set(data.contentHash, { id: data.id, kind: 'image', textContent: null, previewDataUrl: null, contentHash: data.contentHash, createdAt: data.createdAt, sourceDevice: data.sourceDevice, width: data.width, height: data.height, mimeType: 'image/png', pinned: data.pinned === true, chunkCount: data.chunkCount })
       }
     }
-    callback(items)
+    callback([...itemsByHash.values()]
+      .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt - a.createdAt)
+      .slice(0, 50))
   }, onError)
 }
 
@@ -216,30 +242,35 @@ export async function publishWebClipboardItem(
   if (!firestore) throw new Error(firebaseConfigurationError ?? 'Firebase is not configured')
   if (item.kind === 'text') {
     if (!item.textContent) throw new Error('Clipboard text is empty')
-    await setDoc(doc(userItems(uid), item.id), {
-      id: item.id, ownerUid: uid, kind: 'text', textContent: item.textContent,
+    const id = canonicalItemId(item.contentHash)
+    await setDoc(syncedItem(uid, item.contentHash), {
+      id, ownerUid: uid, kind: 'text', textContent: item.textContent,
       contentHash: item.contentHash, createdAt: item.createdAt, sourceDevice: item.sourceDevice,
       mimeType: 'text/plain', pinned: item.pinned, schemaVersion: 2,
     })
+    await removeLegacyItemDocuments(uid, item.contentHash)
     return
   }
   if (!pngBase64 || !item.width || !item.height) throw new Error('Clipboard image is invalid')
   const byteLength = Math.floor(pngBase64.length * 3 / 4) - (pngBase64.endsWith('==') ? 2 : pngBase64.endsWith('=') ? 1 : 0)
   if (byteLength > MAX_SYNC_IMAGE_BYTES) throw new Error('Image exceeds the 25 MiB sync limit')
   const chunkCount = await uploadImageChunks(uid, item.contentHash, pngBase64)
-  await setDoc(doc(userItems(uid), item.id), {
-    id: item.id, ownerUid: uid, kind: 'image', contentHash: item.contentHash,
+  const id = canonicalItemId(item.contentHash)
+  await setDoc(syncedItem(uid, item.contentHash), {
+    id, ownerUid: uid, kind: 'image', contentHash: item.contentHash,
     createdAt: item.createdAt, sourceDevice: item.sourceDevice, width: item.width,
     height: item.height, mimeType: 'image/png', chunkCount, byteLength, pinned: item.pinned, schemaVersion: 2,
   })
+  await removeLegacyItemDocuments(uid, item.contentHash)
 }
 
 export async function publishClipboardItem(uid: string, item: ClipboardItem): Promise<void> {
   if (!firestore) return
   if (item.kind === 'text') {
     if (!item.textContent) return
-    await setDoc(doc(userItems(uid), item.id), {
-      id: item.id,
+    const id = canonicalItemId(item.contentHash)
+    await setDoc(syncedItem(uid, item.contentHash), {
+      id,
       ownerUid: uid,
       kind: 'text',
       textContent: item.textContent,
@@ -250,6 +281,7 @@ export async function publishClipboardItem(uid: string, item: ClipboardItem): Pr
       pinned: item.pinned,
       schemaVersion: 2,
     })
+    await removeLegacyItemDocuments(uid, item.contentHash)
     return
   }
 
@@ -259,8 +291,9 @@ export async function publishClipboardItem(uid: string, item: ClipboardItem): Pr
     - (pngBase64.endsWith('==') ? 2 : pngBase64.endsWith('=') ? 1 : 0)
   if (byteLength > MAX_SYNC_IMAGE_BYTES) throw new Error('Image exceeds the 25 MiB sync limit')
   const chunkCount = await uploadImageChunks(uid, item.contentHash, pngBase64)
-  await setDoc(doc(userItems(uid), item.id), {
-    id: item.id,
+  const id = canonicalItemId(item.contentHash)
+  await setDoc(syncedItem(uid, item.contentHash), {
+    id,
     ownerUid: uid,
     kind: 'image',
     contentHash: item.contentHash,
@@ -274,13 +307,19 @@ export async function publishClipboardItem(uid: string, item: ClipboardItem): Pr
     pinned: item.pinned,
     schemaVersion: 2,
   })
+  await removeLegacyItemDocuments(uid, item.contentHash)
 }
 
 export async function deleteSyncedClipboardItem(uid: string, item: ClipboardItem): Promise<void> {
   if (!firestore) throw new Error(firebaseConfigurationError ?? 'Firebase is not configured')
-  await deleteDoc(doc(userItems(uid), item.id))
-  if (item.kind === 'image' && item.chunkCount) {
-    await Promise.all(Array.from({ length: item.chunkCount }, (_, index) => deleteDoc(
+  const matches = await itemDocumentsByHash(uid, item.contentHash)
+  const chunkCount = matches.docs.reduce((largest, entry) => {
+    const value = entry.data().chunkCount
+    return typeof value === 'number' ? Math.max(largest, value) : largest
+  }, item.chunkCount ?? 0)
+  await Promise.all(matches.docs.map((entry) => deleteDoc(entry.ref)))
+  if (item.kind === 'image' && chunkCount) {
+    await Promise.all(Array.from({ length: chunkCount }, (_, index) => deleteDoc(
       doc(firestore, 'users', uid, 'imageChunks', imageChunkId(item.contentHash, index)),
     )))
   }
@@ -288,7 +327,9 @@ export async function deleteSyncedClipboardItem(uid: string, item: ClipboardItem
 
 export async function setSyncedClipboardItemPinned(uid: string, item: ClipboardItem, pinned: boolean): Promise<void> {
   if (!firestore) throw new Error(firebaseConfigurationError ?? 'Firebase is not configured')
-  await setDoc(doc(userItems(uid), item.id), { pinned }, { merge: true })
+  const matches = await itemDocumentsByHash(uid, item.contentHash)
+  if (matches.empty) throw new Error('Synced clipboard item no longer exists')
+  await Promise.all(matches.docs.map((entry) => setDoc(entry.ref, { pinned }, { merge: true })))
 }
 
 export async function publishRecentClipboardItems(uid: string): Promise<void> {
@@ -307,15 +348,16 @@ export function observeRemoteClipboardItems(
     recent,
     async (snapshot) => {
       try {
-        let imported = false
+        const processedHashes = new Set<string>()
         knownHashes ??= new Set((await listClipboardItems('')).map((item) => item.contentHash))
         for (const change of snapshot.docChanges()) {
           const data = change.doc.data()
           if (change.type === 'removed') {
             if (typeof data.contentHash === 'string') {
+              const remaining = await itemDocumentsByHash(uid, data.contentHash)
+              if (!remaining.empty) continue
               await deleteClipboardItemByHash(data.contentHash)
               knownHashes.delete(data.contentHash)
-              imported = true
             }
             continue
           }
@@ -325,8 +367,14 @@ export function observeRemoteClipboardItems(
             typeof data.createdAt !== 'number' ||
             typeof data.sourceDevice !== 'string'
           ) continue
+          if (processedHashes.has(data.contentHash)) continue
+          processedHashes.add(data.contentHash)
           if (knownHashes.has(data.contentHash)) {
-            if (typeof data.pinned === 'boolean') await setClipboardItemPinned(data.id, data.pinned)
+            await updateClipboardItemSyncMetadata({
+              id: data.id, kind: data.kind, textContent: null, previewDataUrl: null,
+              contentHash: data.contentHash, createdAt: data.createdAt, sourceDevice: data.sourceDevice,
+              width: null, height: null, mimeType: null, pinned: data.pinned === true,
+            })
             continue
           }
 
@@ -354,9 +402,8 @@ export function observeRemoteClipboardItems(
             continue
           }
           knownHashes.add(data.contentHash)
-          imported = true
         }
-        if (imported) onImported()
+        onImported()
       } catch (error) {
         onError(error instanceof Error ? error : new Error(String(error)))
       }

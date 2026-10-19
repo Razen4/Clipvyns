@@ -24,6 +24,7 @@ export const useClipboardStore = defineStore('clipboard', {
     syncUserId: null as string | null,
     syncError: null as string | null,
     syncing: false,
+    remoteReady: false,
   }),
   actions: {
     async initialize() {
@@ -32,7 +33,7 @@ export const useClipboardStore = defineStore('clipboard', {
         await this.refresh()
         if (this.syncUserId) {
           publishClipboardItem(this.syncUserId, event.payload)
-            .then(() => { this.syncError = null })
+            .then(() => { if (this.remoteReady) this.syncError = null })
             .catch((error) => {
               this.syncError = error instanceof Error ? error.message : String(error)
             })
@@ -51,18 +52,30 @@ export const useClipboardStore = defineStore('clipboard', {
       this.syncUserId = uid
       this.syncError = null
       this.syncing = true
+      this.remoteReady = false
+      let resolveInitialSnapshot!: () => void
+      let rejectInitialSnapshot!: (error: Error) => void
+      const initialSnapshot = new Promise<void>((resolve, reject) => {
+        resolveInitialSnapshot = resolve
+        rejectInitialSnapshot = reject
+      })
       this.unsubscribeRemote = observeRemoteClipboardItems(
         uid,
         () => {
           this.syncError = null
+          this.remoteReady = true
+          resolveInitialSnapshot()
           return this.refresh()
         },
         (error) => {
           this.syncError = error.message
           this.syncing = false
+          this.remoteReady = false
+          rejectInitialSnapshot(error)
         },
       )
       try {
+        await initialSnapshot
         let deviceInfo: LocalDeviceInfo | undefined
         try {
           deviceInfo = await getLocalDeviceInfo()
@@ -76,7 +89,7 @@ export const useClipboardStore = defineStore('clipboard', {
           })
         }, DEVICE_HEARTBEAT_INTERVAL_MS)
         await publishRecentClipboardItems(uid)
-        this.syncError = null
+        if (this.remoteReady) this.syncError = null
       } catch (error) {
         this.syncError = error instanceof Error ? error.message : String(error)
       } finally {
@@ -88,6 +101,7 @@ export const useClipboardStore = defineStore('clipboard', {
       this.unsubscribeRemote = null
       this.syncUserId = null
       this.syncing = false
+      this.remoteReady = false
       this.syncError = null
       if (presenceTimer) clearInterval(presenceTimer)
       presenceTimer = undefined

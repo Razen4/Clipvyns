@@ -22,6 +22,7 @@ const activeSection = ref<'clipboard' | 'devices' | 'settings'>('clipboard')
 const mobilePreviewOpen = ref(false)
 const devices = ref<ConnectedDevice[]>([])
 const now = ref(Date.now())
+const syncReady = ref(false)
 let stop: Unsubscribe | null = null
 let stopDevices: Unsubscribe | null = null
 let presenceTimer: ReturnType<typeof setInterval> | null = null
@@ -35,11 +36,12 @@ const visible = computed(() => items.value.filter((item) => {
 }).sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt - a.createdAt))
 const profileName = computed(() => auth.user?.displayName || auth.user?.email?.split('@')[0] || 'MyClipboard user')
 const profileInitial = computed(() => profileName.value.trim().charAt(0).toUpperCase() || 'U')
+const syncLabel = computed(() => !auth.signedIn ? 'Not signed in' : syncReady.value ? 'Synced' : error.value ? 'Sync error' : 'Syncing…')
 
 watch(() => auth.user?.uid, (uid) => {
   stop?.(); stopDevices?.(); if (presenceTimer) clearInterval(presenceTimer)
   stopDevices = null; refreshPresence = null
-  items.value = []; devices.value = []; selected.value = null; error.value = null; deviceError.value = null
+  items.value = []; devices.value = []; selected.value = null; error.value = null; deviceError.value = null; syncReady.value = false
   if (!uid) return
   loading.value = true
   const connectDevices = () => {
@@ -64,12 +66,13 @@ watch(() => auth.user?.uid, (uid) => {
   connectDevices(); sendPresence(); presenceTimer = setInterval(sendPresence, DEVICE_HEARTBEAT_INTERVAL_MS)
   stop = observeWebClipboardItems(uid, async (next) => {
     items.value = next; selected.value ??= next[0] ?? null
+    syncReady.value = true
     for (const item of next.filter((entry) => entry.kind === 'image' && entry.chunkCount && !entry.previewDataUrl)) {
       try { item.previewDataUrl = `data:image/png;base64,${await downloadImageChunks(uid, item.contentHash, item.chunkCount!)}` }
-      catch (reason) { error.value = reason instanceof Error ? reason.message : String(reason) }
+      catch (reason) { error.value = reason instanceof Error ? reason.message : String(reason); syncReady.value = false }
     }
     loading.value = false
-  }, (reason) => { error.value = reason.message; loading.value = false })
+  }, (reason) => { error.value = reason.message; loading.value = false; syncReady.value = false })
 }, { immediate: true })
 async function submit() { try { await auth.submit(email.value.trim(), password.value); loginOpen.value = false } catch { /* exposed by auth store */ } }
 async function copy(item: ClipboardItem) {
@@ -165,7 +168,7 @@ onMounted(() => { auth.initialize(); clockTimer = setInterval(() => { now.value 
 </script>
 
 <template>
-  <main class="web-shell min-h-screen bg-[#070c1b] text-slate-100">
+  <main class="web-shell h-screen overflow-hidden bg-[#070c1b] text-slate-100">
     <aside class="hidden w-72 shrink-0 border-r border-white/8 bg-[#0a1124] p-6 lg:flex lg:flex-col">
       <div class="mb-12 flex items-center gap-3"><div class="brand-mark"><img src="/icon.png" alt="MyClipboard" /></div><div><b class="text-lg">MyClipboard</b><p class="text-sm text-slate-400">Sync across devices</p></div></div>
       <nav class="space-y-2 text-sm"><button class="nav" :class="activeSection === 'clipboard' && 'active'" @click="showSection('clipboard')">▣ Clipboard <span>{{ items.length }}</span></button><button class="nav" :class="activeSection === 'devices' && 'active'" @click="showSection('devices')">⌖ Devices <span>{{ devices.length }}</span></button><button class="nav" :class="activeSection === 'settings' && 'active'" @click="showSection('settings')">⚙ Settings</button></nav>
@@ -175,14 +178,14 @@ onMounted(() => { auth.initialize(); clockTimer = setInterval(() => { now.value 
           <div v-else class="account-avatar account-initial">{{ profileInitial }}</div>
           <div class="min-w-0 flex-1"><b class="block truncate">{{ auth.signedIn ? profileName : 'Guest' }}</b><p class="truncate text-xs text-slate-400">{{ auth.user?.email || 'No account connected' }}</p></div>
         </div>
-        <div class="account-status"><span :class="auth.signedIn ? 'status-online' : 'status-offline'">●</span><div><b>{{ auth.signedIn ? 'Synced' : 'Not signed in' }}</b><p>{{ auth.signedIn ? 'Connected to Firebase' : 'Sign in to sync your clipboard' }}</p></div></div>
+        <div class="account-status"><span :class="syncReady ? 'status-online' : 'status-offline'">●</span><div><b>{{ syncLabel }}</b><p>{{ syncReady ? 'Clipboard is up to date' : error ? 'Clipboard sync needs attention' : auth.signedIn ? 'Connecting to Firebase' : 'Sign in to sync your clipboard' }}</p></div></div>
         <button class="account-card-action" :disabled="auth.busy" @click="auth.signedIn ? auth.signOut() : (loginOpen = true)">{{ auth.busy ? 'Please wait…' : auth.signedIn ? 'Sign out' : 'Sign in' }}</button>
       </div>
     </aside>
     <section class="min-w-0 flex-1 p-3 sm:p-5">
       <header class="app-header mb-4 flex flex-wrap items-center gap-4 rounded-2xl border border-white/8 bg-[#0c1428] px-5 py-4">
         <div class="header-top">
-          <div class="header-copy"><h1 class="text-2xl font-semibold">{{ activeSection === 'clipboard' ? 'Clipboard' : activeSection === 'devices' ? 'Devices & Sync' : 'Settings' }}</h1><p class="mt-1 text-sm text-slate-400">{{ activeSection === 'clipboard' ? 'Your latest 50 items · Sync across devices' : activeSection === 'devices' ? 'Your connected clipboard devices' : 'Manage your clipboard experience' }}</p><span class="mobile-sync-state lg:hidden"><i :class="auth.signedIn ? 'online' : 'offline'" />{{ auth.signedIn ? 'Synced' : 'Not signed in' }}</span></div>
+          <div class="header-copy"><h1 class="text-2xl font-semibold">{{ activeSection === 'clipboard' ? 'Clipboard' : activeSection === 'devices' ? 'Devices & Sync' : 'Settings' }}</h1><p class="mt-1 text-sm text-slate-400">{{ activeSection === 'clipboard' ? 'Your latest 50 items · Sync across devices' : activeSection === 'devices' ? 'Your connected clipboard devices' : 'Manage your clipboard experience' }}</p><span class="mobile-sync-state lg:hidden"><i :class="syncReady ? 'online' : 'offline'" />{{ syncLabel }}</span></div>
           <button class="mobile-account-action lg:hidden" :disabled="auth.busy" @click="auth.signedIn ? auth.signOut() : (loginOpen = true)"><span class="mobile-account-avatar">{{ auth.signedIn ? profileInitial : '♙' }}</span><span>{{ auth.signedIn ? 'Sign out' : 'Sign in' }}</span></button>
         </div>
         <div v-if="activeSection === 'clipboard'" class="header-actions ml-auto flex w-full items-center gap-2 sm:w-auto">

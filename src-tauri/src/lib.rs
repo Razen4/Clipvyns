@@ -175,6 +175,25 @@ fn set_clipboard_item_pinned(
     state.database.set_pinned_by_id(&id, pinned)
 }
 
+#[tauri::command]
+fn update_clipboard_item_sync_metadata(
+    state: State<'_, AppState>,
+    content_hash: String,
+    created_at: i64,
+    source_device: String,
+    pinned: bool,
+) -> Result<(), AppError> {
+    if created_at <= 0 || source_device.len() > 256 {
+        return Err(AppError::Message("remote clipboard metadata is invalid".into()));
+    }
+    state.database.update_sync_metadata_by_hash(
+        &content_hash,
+        created_at,
+        &source_device,
+        pinned,
+    )
+}
+
 fn remove_item_files(item: model::StoredItem) {
     for path in [item.image_path, item.thumbnail_path].into_iter().flatten() {
         if let Err(error) = std::fs::remove_file(&path)
@@ -400,6 +419,7 @@ pub fn run() {
             delete_clipboard_item,
             delete_clipboard_item_by_hash,
             set_clipboard_item_pinned,
+            update_clipboard_item_sync_metadata,
             import_remote_text_item,
             read_local_image,
             import_remote_image

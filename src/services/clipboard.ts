@@ -49,6 +49,15 @@ export function setClipboardItemPinned(id: string, pinned: boolean): Promise<voi
   return invoke('set_clipboard_item_pinned', { id, pinned })
 }
 
+export function updateClipboardItemSyncMetadata(item: ClipboardItem): Promise<void> {
+  return invoke('update_clipboard_item_sync_metadata', {
+    contentHash: item.contentHash,
+    createdAt: item.createdAt,
+    sourceDevice: item.sourceDevice,
+    pinned: item.pinned,
+  })
+}
+
 export function importRemoteTextItem(item: ClipboardItem): Promise<void> {
   if (item.kind !== 'text' || !item.textContent) {
     return Promise.reject(new Error('Only non-empty text items can be imported'))

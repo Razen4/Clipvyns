@@ -40,6 +40,8 @@ const visibleItems = computed(() => store.items.filter((item) => filter.value ==
 const selected = computed(() => store.items.find((item) => item.id === selectedId.value) ?? null)
 const profileName = computed(() => auth.user?.displayName || auth.user?.email?.split('@')[0] || 'MyClipboard user')
 const profileInitial = computed(() => profileName.value.trim().charAt(0).toUpperCase() || 'U')
+const syncReady = computed(() => auth.signedIn && store.remoteReady && !store.syncing && !store.syncError)
+const syncLabel = computed(() => !auth.signedIn ? 'Not signed in' : store.syncError ? 'Sync error' : syncReady.value ? 'Synced' : 'Syncing…')
 
 watch(() => store.items, (items) => {
   if (!items.some((item) => item.id === selectedId.value)) selectedId.value = items[0]?.id ?? null
@@ -204,14 +206,14 @@ onBeforeUnmount(() => {
       <nav class="space-y-2 text-sm"><button class="nav" :class="activeSection === 'clipboard' && 'active'" @click="showSection('clipboard')">▣ Clipboard <span>{{ store.items.length }}</span></button><button class="nav" :class="activeSection === 'devices' && 'active'" @click="showSection('devices')">⌖ Devices <span>{{ devices.length }}</span></button><button class="nav" :class="activeSection === 'settings' && 'active'" @click="showSection('settings')">⚙ Settings</button></nav>
       <div class="account-card mt-auto rounded-2xl border border-white/8 bg-white/[.03] p-4 text-sm">
         <div class="account-profile"><img v-if="auth.user?.photoURL" :src="auth.user.photoURL" :alt="profileName" class="account-avatar" referrerpolicy="no-referrer" /><div v-else class="account-avatar account-initial">{{ profileInitial }}</div><div class="min-w-0 flex-1"><b class="block truncate">{{ auth.signedIn ? profileName : 'Guest' }}</b><p class="truncate text-xs text-slate-400">{{ auth.user?.email || 'No account connected' }}</p></div></div>
-        <div class="account-status"><span :class="auth.signedIn ? 'status-online' : 'status-offline'">●</span><div><b>{{ auth.signedIn ? 'Synced' : 'Not signed in' }}</b><p>{{ auth.signedIn ? 'Connected to Firebase' : 'Sign in to sync your clipboard' }}</p></div></div>
+        <div class="account-status"><span :class="syncReady ? 'status-online' : 'status-offline'">●</span><div><b>{{ syncLabel }}</b><p>{{ syncReady ? 'Clipboard is up to date' : store.syncError ? 'Clipboard sync needs attention' : auth.signedIn ? 'Connecting to Firebase' : 'Sign in to sync your clipboard' }}</p></div></div>
         <button class="account-card-action" :disabled="auth.busy" @click="auth.signedIn ? auth.signOut() : (loginOpen = true)">{{ auth.busy ? 'Please wait…' : auth.signedIn ? 'Sign out' : 'Sign in' }}</button>
       </div>
     </aside>
 
     <section class="min-w-0 flex-1 overflow-y-auto p-3 sm:p-5">
       <header class="app-header mb-4 flex flex-wrap items-center gap-4 rounded-2xl border border-white/8 bg-[#0c1428] px-5 py-4">
-        <div class="header-top"><div class="header-copy"><h1 class="text-2xl font-semibold">{{ activeSection === 'clipboard' ? 'Clipboard' : activeSection === 'devices' ? 'Devices & Sync' : 'Settings' }}</h1><p class="mt-1 text-sm text-slate-400">{{ activeSection === 'clipboard' ? 'Your latest 50 items · Sync across devices' : activeSection === 'devices' ? 'Your connected clipboard devices' : 'Manage your clipboard experience' }}</p><span class="mobile-sync-state lg:hidden"><i :class="auth.signedIn ? 'online' : 'offline'" />{{ auth.signedIn ? 'Synced' : 'Local only' }}</span></div><button class="mobile-account-action lg:hidden" :disabled="auth.busy" @click="auth.signedIn ? auth.signOut() : (loginOpen = true)"><span class="mobile-account-avatar">{{ auth.signedIn ? profileInitial : '♙' }}</span><span>{{ auth.signedIn ? 'Sign out' : 'Sign in' }}</span></button></div>
+        <div class="header-top"><div class="header-copy"><h1 class="text-2xl font-semibold">{{ activeSection === 'clipboard' ? 'Clipboard' : activeSection === 'devices' ? 'Devices & Sync' : 'Settings' }}</h1><p class="mt-1 text-sm text-slate-400">{{ activeSection === 'clipboard' ? 'Your latest 50 items · Sync across devices' : activeSection === 'devices' ? 'Your connected clipboard devices' : 'Manage your clipboard experience' }}</p><span class="mobile-sync-state lg:hidden"><i :class="syncReady ? 'online' : 'offline'" />{{ auth.signedIn ? syncLabel : 'Local only' }}</span></div><button class="mobile-account-action lg:hidden" :disabled="auth.busy" @click="auth.signedIn ? auth.signOut() : (loginOpen = true)"><span class="mobile-account-avatar">{{ auth.signedIn ? profileInitial : '♙' }}</span><span>{{ auth.signedIn ? 'Sign out' : 'Sign in' }}</span></button></div>
         <div v-if="activeSection === 'clipboard'" class="header-actions ml-auto flex w-full items-center gap-2 sm:w-auto"><label class="mobile-search"><span aria-hidden="true">⌕</span><input :value="store.query" type="search" placeholder="Search clipboard…" @input="onSearch" /></label><span class="desktop-auto-capture">● Automatic capture</span></div>
       </header>
 
