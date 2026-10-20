@@ -166,6 +166,10 @@ Image chunks are saved privately under each Firebase user; the included rules on
 
 The Tauri capability grants core commands plus the explicitly needed global-shortcut and autostart plugin commands; clipboard and filesystem access occur inside the Rust process rather than through frontend plugins.
 
+## License
+
+Copyright (c) 2026 Razen4. All rights reserved. See [`LICENSE`](LICENSE) for the complete terms.
+
 ## Roadmap boundaries
 
 - Phase 2: tray/menu bar, private mode, pause controls, and native-paste permissions.

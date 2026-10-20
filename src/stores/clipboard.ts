@@ -28,7 +28,6 @@ export const useClipboardStore = defineStore('clipboard', {
   }),
   actions: {
     async initialize() {
-      await this.refresh()
       this.unlisten = await listen<ClipboardItem>('clipboard://changed', async (event) => {
         await this.refresh()
         if (this.syncUserId) {
@@ -39,6 +38,9 @@ export const useClipboardStore = defineStore('clipboard', {
             })
         }
       })
+      // Listen first so a clipboard capture during webview startup cannot be
+      // missed between the initial database query and event subscription.
+      await this.refresh()
     },
     dispose() {
       this.unlisten?.()
