@@ -14,12 +14,14 @@ const lockPath = resolve(root, 'package-lock.json')
 const tauriPath = resolve(root, 'src-tauri', 'tauri.conf.json')
 const cargoPath = resolve(root, 'src-tauri', 'Cargo.toml')
 const cargoLockPath = resolve(root, 'src-tauri', 'Cargo.lock')
+const readmePath = resolve(root, 'README.md')
 
 const packageJson = JSON.parse(await readFile(packagePath, 'utf8'))
 const packageLock = JSON.parse(await readFile(lockPath, 'utf8'))
 const tauriConfig = JSON.parse(await readFile(tauriPath, 'utf8'))
 const cargoToml = await readFile(cargoPath, 'utf8')
 const cargoLock = await readFile(cargoLockPath, 'utf8')
+const readme = await readFile(readmePath, 'utf8')
 
 const cargoVersion = cargoToml.match(/^\[package\][\s\S]*?^version = "([^"]+)"/m)?.[1]
 const cargoLockVersion = cargoLock.match(/^\[\[package\]\]\r?\nname = "clipboard-sharings"\r?\nversion = "([^"]+)"/m)?.[1]
@@ -30,6 +32,7 @@ const versions = {
   'src-tauri/tauri.conf.json': tauriConfig.version,
   'src-tauri/Cargo.toml': cargoVersion,
   'src-tauri/Cargo.lock': cargoLockVersion,
+  'README.md': readme.match(/^Current version: \*\*([^*]+)\*\*$/m)?.[1],
 }
 
 if (checkOnly) {
@@ -54,6 +57,13 @@ const updatedCargoLock = cargoLock.replace(
   /(^\[\[package\]\]\r?\nname = "clipboard-sharings"\r?\nversion = ")[^"]+("$)/m,
   `$1${requestedVersion}$2`,
 )
+const updatedReadme = readme
+  .replace(/(^Current version: \*\*)[^*]+(\*\*$)/m, `$1${requestedVersion}$2`)
+  .replace(/(^npm run version:set -- )\S+$/m, `$1${requestedVersion}`)
+  .replace(/(^npm run version:check -- )\S+$/m, `$1${requestedVersion}`)
+  .replace(/(^git commit -m "chore: release v)[^"]+("$)/m, `$1${requestedVersion}$2`)
+  .replace(/(^git tag v)\S+$/m, `$1${requestedVersion}`)
+  .replace(/(^git push origin main v)\S+$/m, `$1${requestedVersion}`)
 
 await Promise.all([
   writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`),
@@ -61,6 +71,7 @@ await Promise.all([
   writeFile(tauriPath, `${JSON.stringify(tauriConfig, null, 2)}\n`),
   writeFile(cargoPath, updatedCargoToml),
   writeFile(cargoLockPath, updatedCargoLock),
+  writeFile(readmePath, updatedReadme),
 ])
 
 console.log(`Updated project version to ${requestedVersion}.`)

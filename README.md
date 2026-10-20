@@ -2,6 +2,8 @@
 
 A compact macOS and Windows clipboard-history application built with Tauri 2, Vue 3, TypeScript, Pinia, Tailwind CSS, Rust, and SQLite.
 
+Current version: **0.1.7**
+
 ## Current implementation
 
 Local clipboard history includes:
@@ -15,7 +17,13 @@ Local clipboard history includes:
 - per-item deletion with removal of associated local image files;
 - a compact keyboard-accessible Vue/Pinia interface with loading, empty, and error states.
 
-When signed in to the same Firebase account, text and PNG clipboard images sync between macOS and Windows. PNG data is split into bounded Firestore documents so no Cloudflare service or Firebase Storage bucket is required. Settings can enable or disable launch at login on macOS and Windows. Tray/menu-bar behavior, private mode, and pause controls are not implemented.
+The web app keeps its latest 50 clipboard items in browser `localStorage`, so
+local history, paste, pin, delete, and copy remain available without signing in.
+When signed in to the same Firebase account, text and PNG clipboard images sync
+between the web app, macOS, and Windows. PNG data is split into bounded
+Firestore documents, so no Cloudflare service or Firebase Storage bucket is
+required. Settings can enable or disable launch at login on macOS and Windows.
+Tray/menu-bar behavior, private mode, and pause controls are not implemented.
 
 ## Prerequisites
 
@@ -32,12 +40,14 @@ npm run tauri dev
 
 Build Windows installers (`.exe` and `.msi`) from a Visual Studio Developer PowerShell:
 
-```sh
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -Raw "$env:USERPROFILE\.tauri\clipboard-sharings.key"
 npm run build:windows
 ```
 
 The installers are written to `src-tauri/target/release/bundle/nsis/` and
-`src-tauri/target/release/bundle/msi/`.
+`src-tauri/target/release/bundle/msi/`. If `TAURI_SIGNING_PRIVATE_KEY` is not
+set, the installers may be produced but updater signature generation will fail.
 
 Build macOS bundles (`.app` and `.dmg`) on a Mac:
 
@@ -92,14 +102,21 @@ Get-Content -Raw "$env:USERPROFILE\.tauri\clipboard-sharings.key" |
   gh secret set TAURI_SIGNING_PRIVATE_KEY
 ```
 
-Create a release from any development machine with:
+Update and verify all application version fields from any development machine:
 
 ```sh
-npm run version:set -- 0.1.6
+npm run version:set -- 0.1.7
+npm run version:check -- 0.1.7
+npm run build
+```
+
+Only when a release is ready and pushing has been explicitly authorized:
+
+```sh
 git add .
-git commit -m "chore: release v0.1.6"
-git tag v0.1.6
-git push origin main v0.1.6
+git commit -m "chore: release v0.1.7"
+git tag v0.1.7
+git push origin main v0.1.7
 ```
 
 The workflow rejects a tag whose version does not match `package.json`,
@@ -112,7 +129,11 @@ The local database and image directory are created beneath Tauri's per-user app-
 - macOS: `~/Library/Application Support/com.razencdev.clipboard-sharings/`
 - Windows: `%APPDATA%\\com.razencdev.clipboard-sharings\\`
 
-No browser Clipboard API is used. The webview only calls the allowlisted Rust commands and listens for change notifications.
+The Tauri desktop webview does not use the browser Clipboard API; it calls the
+allowlisted Rust commands and listens for native clipboard change notifications.
+The standalone web app uses the browser Clipboard API only after a direct user
+action and stores its local history under `clipvyn-web-clipboard-v1` in
+`localStorage`.
 
 ## Phase 1 test instructions
 
@@ -168,11 +189,10 @@ The Tauri capability grants core commands plus the explicitly needed global-shor
 
 ## License
 
-Copyright (c) 2026 Razen4. All rights reserved. See [`LICENSE`](LICENSE) for the complete terms.
+Copyright (c) 2026 Razen4. All rights reserved. See [`LICENSE`](LICENSE) for the complete proprietary terms.
 
 ## Roadmap boundaries
 
 - Phase 2: tray/menu bar, private mode, pause controls, and native-paste permissions.
 - Durable sync queue, retry/backoff, pause/private modes, cleanup, and encryption lifecycle.
 - macOS/Windows integration matrices, platform packaging, and release documentation.
-# Clipvyn

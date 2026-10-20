@@ -12,7 +12,7 @@ These instructions apply to the entire repository.
   npm run version:set -- <new-version>
   ```
 
-  This command updates `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and the Clipvyn package entry in `src-tauri/Cargo.lock`.
+  This command updates `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, the Clipvyn package entry in `src-tauri/Cargo.lock`, and the current-version/release examples in `README.md`.
 
 - Verify that every version field matches:
 
