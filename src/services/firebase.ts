@@ -30,6 +30,7 @@ import type { ClipboardItem } from '../types'
 const IMAGE_CHUNK_CHARACTERS = 700_000
 const MAX_IMAGE_CHUNKS = 50
 const MAX_SYNC_IMAGE_BYTES = 25 * 1024 * 1024
+const HISTORY_STORAGE_LIMIT = 80
 export const DEVICE_HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000
 export const DEVICE_ACTIVE_WINDOW_MS = 12 * 60 * 1000
 
@@ -230,7 +231,7 @@ export function observeWebClipboardItems(
     }
     callback([...itemsByHash.values()]
       .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt - a.createdAt)
-      .slice(0, 50))
+      .slice(0, HISTORY_STORAGE_LIMIT))
   }, onError)
 }
 
@@ -249,6 +250,7 @@ export async function publishWebClipboardItem(
       mimeType: 'text/plain', pinned: item.pinned, schemaVersion: 2,
     })
     await removeLegacyItemDocuments(uid, item.contentHash)
+    await pruneSyncedClipboardItems(uid)
     return
   }
   if (!pngBase64 || !item.width || !item.height) throw new Error('Clipboard image is invalid')
@@ -262,9 +264,10 @@ export async function publishWebClipboardItem(
     height: item.height, mimeType: 'image/png', chunkCount, byteLength, pinned: item.pinned, schemaVersion: 2,
   })
   await removeLegacyItemDocuments(uid, item.contentHash)
+  await pruneSyncedClipboardItems(uid)
 }
 
-export async function publishClipboardItem(uid: string, item: ClipboardItem): Promise<void> {
+export async function publishClipboardItem(uid: string, item: ClipboardItem, pruneAfter = true): Promise<void> {
   if (!firestore) return
   if (item.kind === 'text') {
     if (!item.textContent) return
@@ -282,6 +285,7 @@ export async function publishClipboardItem(uid: string, item: ClipboardItem): Pr
       schemaVersion: 2,
     })
     await removeLegacyItemDocuments(uid, item.contentHash)
+    if (pruneAfter) await pruneSyncedClipboardItems(uid)
     return
   }
 
@@ -308,21 +312,47 @@ export async function publishClipboardItem(uid: string, item: ClipboardItem): Pr
     schemaVersion: 2,
   })
   await removeLegacyItemDocuments(uid, item.contentHash)
+  if (pruneAfter) await pruneSyncedClipboardItems(uid)
 }
 
-export async function deleteSyncedClipboardItem(uid: string, item: ClipboardItem): Promise<void> {
+async function deleteSyncedClipboardHash(uid: string, contentHash: string, expectedChunkCount = 0): Promise<void> {
   if (!firestore) throw new Error(firebaseConfigurationError ?? 'Firebase is not configured')
-  const matches = await itemDocumentsByHash(uid, item.contentHash)
+  const matches = await itemDocumentsByHash(uid, contentHash)
   const chunkCount = matches.docs.reduce((largest, entry) => {
     const value = entry.data().chunkCount
     return typeof value === 'number' ? Math.max(largest, value) : largest
-  }, item.chunkCount ?? 0)
+  }, expectedChunkCount)
   await Promise.all(matches.docs.map((entry) => deleteDoc(entry.ref)))
-  if (item.kind === 'image' && chunkCount) {
+  if (chunkCount) {
     await Promise.all(Array.from({ length: chunkCount }, (_, index) => deleteDoc(
-      doc(firestore, 'users', uid, 'imageChunks', imageChunkId(item.contentHash, index)),
+      doc(firestore, 'users', uid, 'imageChunks', imageChunkId(contentHash, index)),
     )))
   }
+}
+
+export async function deleteSyncedClipboardItem(uid: string, item: ClipboardItem): Promise<void> {
+  await deleteSyncedClipboardHash(uid, item.contentHash, item.chunkCount ?? 0)
+}
+
+export async function pruneSyncedClipboardItems(uid: string): Promise<void> {
+  const snapshot = await getDocs(query(userItems(uid), orderBy('createdAt', 'desc')))
+  const itemsByHash = new Map<string, { contentHash: string; createdAt: number; pinned: boolean; chunkCount: number }>()
+  for (const entry of snapshot.docs) {
+    const data = entry.data()
+    if (typeof data.contentHash !== 'string' || typeof data.createdAt !== 'number') continue
+    const candidate = {
+      contentHash: data.contentHash,
+      createdAt: data.createdAt,
+      pinned: data.pinned === true,
+      chunkCount: typeof data.chunkCount === 'number' ? data.chunkCount : 0,
+    }
+    const existing = itemsByHash.get(candidate.contentHash)
+    if (!existing || candidate.createdAt > existing.createdAt) itemsByHash.set(candidate.contentHash, candidate)
+  }
+  const expired = [...itemsByHash.values()]
+    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt - a.createdAt)
+    .slice(HISTORY_STORAGE_LIMIT)
+  await Promise.all(expired.map((item) => deleteSyncedClipboardHash(uid, item.contentHash, item.chunkCount)))
 }
 
 export async function setSyncedClipboardItemPinned(uid: string, item: ClipboardItem, pinned: boolean): Promise<void> {
@@ -334,7 +364,8 @@ export async function setSyncedClipboardItemPinned(uid: string, item: ClipboardI
 
 export async function publishRecentClipboardItems(uid: string): Promise<void> {
   const localItems = await listClipboardItems('')
-  for (const item of localItems) await publishClipboardItem(uid, item)
+  for (const item of localItems) await publishClipboardItem(uid, item, false)
+  await pruneSyncedClipboardItems(uid)
 }
 
 export function observeRemoteClipboardItems(

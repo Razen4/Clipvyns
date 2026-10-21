@@ -94,6 +94,7 @@ fn capture_current(
             mime_type: Some("text/plain"),
             pinned: false,
         })?;
+        crate::prune_history(state)?;
         set_observed(&state.last_observed_hash, hash);
         return Ok(Some(stored));
     }
@@ -109,7 +110,7 @@ fn capture_image(
     bytes: Vec<u8>,
 ) -> Result<StoredItem, AppError> {
     if let Some(existing) = state.database.find_by_hash(&hash)? {
-        return state.database.upsert(NewItem {
+        let stored = state.database.upsert(NewItem {
             id: &existing.item.id,
             kind: "image",
             text_content: None,
@@ -122,7 +123,9 @@ fn capture_image(
             height: Some(height),
             mime_type: Some("image/png"),
             pinned: false,
-        });
+        })?;
+        crate::prune_history(state)?;
+        return Ok(stored);
     }
 
     let rgba = RgbaImage::from_raw(width, height, bytes)
@@ -150,7 +153,10 @@ fn capture_image(
         mime_type: Some("image/png"),
         pinned: false,
     }) {
-        Ok(item) => Ok(item),
+        Ok(item) => {
+            crate::prune_history(state)?;
+            Ok(item)
+        }
         Err(error) => {
             let _ = std::fs::remove_file(image_path);
             let _ = std::fs::remove_file(thumbnail_path);

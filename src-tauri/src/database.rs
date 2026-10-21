@@ -222,6 +222,27 @@ impl Database {
         }
         Ok(item)
     }
+
+    pub fn prune(&self, max_items: usize) -> Result<Vec<StoredItem>, AppError> {
+        let mut connection = self.open()?;
+        let transaction = connection.transaction()?;
+        let expired = {
+            let mut statement = transaction.prepare(
+                "SELECT id, kind, text_content, image_path, thumbnail_path, content_hash,
+                        created_at, source_device, width, height, mime_type, pinned
+                 FROM clipboard_items
+                 ORDER BY pinned DESC, created_at DESC
+                 LIMIT -1 OFFSET ?1",
+            )?;
+            let rows = statement.query_map([max_items as i64], map_stored_item)?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for item in &expired {
+            transaction.execute("DELETE FROM clipboard_items WHERE id = ?1", [&item.item.id])?;
+        }
+        transaction.commit()?;
+        Ok(expired)
+    }
 }
 
 fn map_stored_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredItem> {
@@ -334,6 +355,37 @@ mod tests {
         assert_eq!(items.len(), 50);
         assert_eq!(items[0].id, "id-54");
         assert_eq!(items[49].id, "id-5");
+    }
+
+    #[test]
+    fn prunes_storage_to_eighty_while_prioritizing_pinned_items() {
+        let directory = tempdir().unwrap();
+        let database = Database::initialize(directory.path().join("history.db")).unwrap();
+        for index in 0..85 {
+            database
+                .upsert(test_item(
+                    &format!("id-{index}"),
+                    &format!("hash-{index}"),
+                    &format!("item {index}"),
+                    index,
+                ))
+                .unwrap();
+        }
+        database.set_pinned_by_id("id-0", true).unwrap();
+
+        let expired = database.prune(80).unwrap();
+
+        assert_eq!(expired.len(), 5);
+        assert!(database.find_by_id("id-0").unwrap().is_some());
+        for index in 1..=5 {
+            assert!(
+                database
+                    .find_by_id(&format!("id-{index}"))
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        assert!(database.find_by_id("id-6").unwrap().is_some());
     }
 
     #[test]

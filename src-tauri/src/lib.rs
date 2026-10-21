@@ -16,6 +16,8 @@ use tauri::{Manager, State};
 use thiserror::Error;
 use uuid::Uuid;
 
+const HISTORY_STORAGE_LIMIT: usize = 80;
+
 #[derive(Clone)]
 struct AppState {
     database: Database,
@@ -193,6 +195,13 @@ fn update_clipboard_item_sync_metadata(
         .update_sync_metadata_by_hash(&content_hash, created_at, &source_device, pinned)
 }
 
+fn prune_history(state: &AppState) -> Result<(), AppError> {
+    for item in state.database.prune(HISTORY_STORAGE_LIMIT)? {
+        remove_item_files(item);
+    }
+    Ok(())
+}
+
 fn remove_item_files(item: model::StoredItem) {
     for path in [item.image_path, item.thumbnail_path].into_iter().flatten() {
         if let Err(error) = std::fs::remove_file(&path)
@@ -253,6 +262,7 @@ fn import_remote_text_item(
     state
         .database
         .set_pinned_by_hash(&item.content_hash, item.pinned)?;
+    prune_history(&state)?;
     Ok(())
 }
 
@@ -350,6 +360,7 @@ fn import_remote_image(
     state
         .database
         .set_pinned_by_hash(&item.content_hash, item.pinned)?;
+    prune_history(&state)?;
     Ok(())
 }
 
@@ -408,6 +419,8 @@ pub fn run() {
                 device_name: device_name(),
                 last_observed_hash: Arc::new(Mutex::new(None)),
             };
+            prune_history(&state)
+                .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
             app.manage(state.clone());
             clipboard::start_watcher(app.handle().clone(), state);
             Ok(())

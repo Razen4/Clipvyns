@@ -1,6 +1,6 @@
 [package]
 name = "clipboard-sharings"
-version = "0.1.7"
+version = "0.0.2"
 description = "Private cross-platform clipboard history"
 authors = ["Clipvyn contributors"]
 edition = "2024"

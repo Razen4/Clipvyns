@@ -2,7 +2,7 @@
 
 A compact macOS and Windows clipboard-history application built with Tauri 2, Vue 3, TypeScript, Pinia, Tailwind CSS, Rust, and SQLite.
 
-Current version: **0.1.7**
+Current version: **0.0.2**
 
 ## Current implementation
 
@@ -13,16 +13,18 @@ Local clipboard history includes:
 - full-resolution local PNG storage plus bounded 320×180 thumbnails;
 - SHA-256 content deduplication with stable item IDs;
 - native text and image restoration followed by automatic paste into the previously focused application;
-- newest-first history and native SQLite search, limited to 50 visible results;
+- newest-first history retaining 80 items with native SQLite search limited to 50 visible results;
 - per-item deletion with removal of associated local image files;
 - a compact keyboard-accessible Vue/Pinia interface with loading, empty, and error states.
 
-The web app keeps its latest 50 clipboard items in browser `localStorage`, so
+The web app keeps its latest 80 clipboard items in browser `localStorage` and
+shows up to 50 matching items, so
 local history, paste, pin, delete, and copy remain available without signing in.
 When signed in to the same Firebase account, text and PNG clipboard images sync
 between the web app, macOS, and Windows. PNG data is split into bounded
 Firestore documents, so no Cloudflare service or Firebase Storage bucket is
-required. Settings can enable or disable launch at login on macOS and Windows.
+required. Firestore, SQLite, and associated image data are pruned beyond the
+80-item retention limit. Settings can enable or disable launch at login on macOS and Windows.
 Tray/menu-bar behavior, private mode, and pause controls are not implemented.
 
 ## Prerequisites
@@ -105,8 +107,8 @@ Get-Content -Raw "$env:USERPROFILE\.tauri\clipboard-sharings.key" |
 Update and verify all application version fields from any development machine:
 
 ```sh
-npm run version:set -- 0.1.7
-npm run version:check -- 0.1.7
+npm run version:set -- 0.0.2
+npm run version:check -- 0.0.2
 npm run build
 ```
 
@@ -114,9 +116,9 @@ Only when a release is ready and pushing has been explicitly authorized:
 
 ```sh
 git add .
-git commit -m "chore: release v0.1.7"
-git tag v0.1.7
-git push origin main v0.1.7
+git commit -m "chore: release v0.0.2"
+git tag v0.0.2
+git push origin main v0.0.2
 ```
 
 The workflow rejects a tag whose version does not match `package.json`,
