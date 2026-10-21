@@ -113,6 +113,18 @@ async fn paste_clipboard_item(
     }
 }
 
+#[tauri::command]
+fn restore_clipboard_item_by_hash(
+    state: State<'_, AppState>,
+    content_hash: String,
+) -> Result<(), AppError> {
+    let item = state
+        .database
+        .find_by_hash(&content_hash)?
+        .ok_or_else(|| AppError::Message("clipboard item no longer exists".into()))?;
+    clipboard::restore_item(&state, item)
+}
+
 fn paste_shortcut_on_main_thread(
     app: &tauri::AppHandle,
 ) -> Result<(), clipboard::PasteShortcutError> {
@@ -430,6 +442,7 @@ pub fn run() {
             reveal_application,
             list_clipboard_items,
             paste_clipboard_item,
+            restore_clipboard_item_by_hash,
             delete_clipboard_item,
             delete_clipboard_item_by_hash,
             set_clipboard_item_pinned,

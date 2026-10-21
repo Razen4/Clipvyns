@@ -24,13 +24,14 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore'
 
-import { deleteClipboardItemByHash, importRemoteImage, importRemoteTextItem, listClipboardItems, readLocalImage, updateClipboardItemSyncMetadata } from './clipboard'
+import { deleteClipboardItemByHash, importRemoteImage, importRemoteTextItem, listClipboardItems, readLocalImage, restoreClipboardItemByHash, updateClipboardItemSyncMetadata } from './clipboard'
 import type { ClipboardItem } from '../types'
 
 const IMAGE_CHUNK_CHARACTERS = 700_000
 const MAX_IMAGE_CHUNKS = 50
 const MAX_SYNC_IMAGE_BYTES = 25 * 1024 * 1024
 const HISTORY_STORAGE_LIMIT = 80
+const REMOTE_CLIPBOARD_MAX_AGE_MS = 60_000
 export const DEVICE_HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000
 export const DEVICE_ACTIVE_WINDOW_MS = 12 * 60 * 1000
 
@@ -362,6 +363,21 @@ export async function setSyncedClipboardItemPinned(uid: string, item: ClipboardI
   await Promise.all(matches.docs.map((entry) => setDoc(entry.ref, { pinned }, { merge: true })))
 }
 
+export async function activateSyncedClipboardItem(
+  uid: string,
+  item: ClipboardItem,
+  sourceDevice: string,
+): Promise<void> {
+  if (!firestore) throw new Error(firebaseConfigurationError ?? 'Firebase is not configured')
+  const matches = await itemDocumentsByHash(uid, item.contentHash)
+  if (matches.empty) throw new Error('Synced clipboard item no longer exists')
+  const createdAt = Date.now()
+  await Promise.all(matches.docs.map((entry) => setDoc(entry.ref, {
+    createdAt,
+    sourceDevice,
+  }, { merge: true })))
+}
+
 export async function publishRecentClipboardItems(uid: string): Promise<void> {
   const localItems = await listClipboardItems('')
   for (const item of localItems) await publishClipboardItem(uid, item, false)
@@ -375,15 +391,20 @@ export function observeRemoteClipboardItems(
 ): Unsubscribe {
   const recent = query(userItems(uid), orderBy('createdAt', 'desc'))
   let knownHashes: Set<string> | null = null
+  let initialSnapshot = true
+  const listenerStartedAt = Date.now()
+  const observedCreatedAt = new Map<string, number>()
   return onSnapshot(
     recent,
     async (snapshot) => {
       try {
         const processedHashes = new Set<string>()
+        let clipboardCandidate: { contentHash: string; createdAt: number } | null = null
         knownHashes ??= new Set((await listClipboardItems('')).map((item) => item.contentHash))
         for (const change of snapshot.docChanges()) {
           const data = change.doc.data()
           if (change.type === 'removed') {
+            observedCreatedAt.delete(change.doc.id)
             if (typeof data.contentHash === 'string') {
               const remaining = await itemDocumentsByHash(uid, data.contentHash)
               if (!remaining.empty) continue
@@ -398,6 +419,12 @@ export function observeRemoteClipboardItems(
             typeof data.createdAt !== 'number' ||
             typeof data.sourceDevice !== 'string'
           ) continue
+          const previousCreatedAt = observedCreatedAt.get(change.doc.id)
+          observedCreatedAt.set(change.doc.id, data.createdAt)
+          const shouldRestoreClipboard = !initialSnapshot
+            && !change.doc.metadata.hasPendingWrites
+            && data.createdAt > (previousCreatedAt ?? 0)
+            && data.createdAt >= listenerStartedAt - REMOTE_CLIPBOARD_MAX_AGE_MS
           if (processedHashes.has(data.contentHash)) continue
           processedHashes.add(data.contentHash)
           if (knownHashes.has(data.contentHash)) {
@@ -406,6 +433,9 @@ export function observeRemoteClipboardItems(
               contentHash: data.contentHash, createdAt: data.createdAt, sourceDevice: data.sourceDevice,
               width: null, height: null, mimeType: null, pinned: data.pinned === true,
             })
+            if (shouldRestoreClipboard && (!clipboardCandidate || data.createdAt > clipboardCandidate.createdAt)) {
+              clipboardCandidate = { contentHash: data.contentHash, createdAt: data.createdAt }
+            }
             continue
           }
 
@@ -433,7 +463,12 @@ export function observeRemoteClipboardItems(
             continue
           }
           knownHashes.add(data.contentHash)
+          if (shouldRestoreClipboard && (!clipboardCandidate || data.createdAt > clipboardCandidate.createdAt)) {
+            clipboardCandidate = { contentHash: data.contentHash, createdAt: data.createdAt }
+          }
         }
+        if (clipboardCandidate) await restoreClipboardItemByHash(clipboardCandidate.contentHash)
+        initialSnapshot = false
         onImported()
       } catch (error) {
         onError(error instanceof Error ? error : new Error(String(error)))

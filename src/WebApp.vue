@@ -18,7 +18,7 @@ import userIcon from '@iconify-icons/lucide/user'
 import xIcon from '@iconify-icons/lucide/x'
 import type { Unsubscribe } from 'firebase/firestore'
 import { useAuthStore } from './stores/auth'
-import { DEVICE_ACTIVE_WINDOW_MS, DEVICE_HEARTBEAT_INTERVAL_MS, deleteSyncedClipboardItem, downloadImageChunks, observeDevices, observeWebClipboardItems, pruneSyncedClipboardItems, publishDevicePresence, publishWebClipboardItem, setSyncedClipboardItemPinned, type ConnectedDevice } from './services/firebase'
+import { DEVICE_ACTIVE_WINDOW_MS, DEVICE_HEARTBEAT_INTERVAL_MS, activateSyncedClipboardItem, deleteSyncedClipboardItem, downloadImageChunks, observeDevices, observeWebClipboardItems, pruneSyncedClipboardItems, publishDevicePresence, publishWebClipboardItem, setSyncedClipboardItemPinned, type ConnectedDevice } from './services/firebase'
 import type { ClipboardItem } from './types'
 
 const LOCAL_CLIPBOARD_KEY = 'clipvyn-web-clipboard-v1'
@@ -157,6 +157,7 @@ async function copy(item: ClipboardItem) {
       const blob = await (await fetch(item.previewDataUrl)).blob()
       await navigator.clipboard.write([new globalThis.ClipboardItem({ [blob.type || 'image/png']: blob })])
     } else throw new Error('This clipboard item is unavailable')
+    if (auth.user) await activateSyncedClipboardItem(auth.user.uid, item, webDeviceName())
     copiedItemId.value = item.id
     if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
     copyFeedbackTimer = setTimeout(() => { copiedItemId.value = null }, 2200)

@@ -37,6 +37,10 @@ export function pasteClipboardItem(id: string): Promise<PasteResult> {
   return invoke('paste_clipboard_item', { id })
 }
 
+export function restoreClipboardItemByHash(contentHash: string): Promise<void> {
+  return invoke('restore_clipboard_item_by_hash', { contentHash })
+}
+
 export function deleteClipboardItem(id: string): Promise<void> {
   return invoke('delete_clipboard_item', { id })
 }
