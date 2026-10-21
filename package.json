@@ -1,7 +1,7 @@
 {
   "name": "clipvyn",
   "private": true,
-  "version": "0.0.2",
+  "version": "0.0.8",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -14,6 +14,8 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@iconify-icons/lucide": "^2.0.23",
+    "@iconify/vue": "^5.0.4",
     "@tauri-apps/api": "2.12.3",
     "@tauri-apps/plugin-autostart": "^2.7.0",
     "@tauri-apps/plugin-global-shortcut": "^2.4.1",
