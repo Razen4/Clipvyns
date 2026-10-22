@@ -85,7 +85,7 @@ service cloud.firestore {
     }
 
     match /users/{userId}/devices/{deviceId} {
-      allow read: if owns(userId);
+      allow read, delete: if owns(userId);
       allow create, update: if owns(userId)
         && request.resource.data.id == deviceId
         && request.resource.data.ownerUid == userId;

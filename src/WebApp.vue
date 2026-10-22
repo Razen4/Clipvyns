@@ -4,6 +4,7 @@ import { Icon } from '@iconify/vue'
 import checkIcon from '@iconify-icons/lucide/check'
 import clipboardIcon from '@iconify-icons/lucide/clipboard'
 import clipboardPasteIcon from '@iconify-icons/lucide/clipboard-paste'
+import downloadIcon from '@iconify-icons/lucide/download'
 import fileTextIcon from '@iconify-icons/lucide/file-text'
 import imageIcon from '@iconify-icons/lucide/image'
 import laptopIcon from '@iconify-icons/lucide/laptop'
@@ -21,7 +22,7 @@ import { getVersion } from '@tauri-apps/api/app'
 import { readText as readNativeClipboardText, writeText as writeNativeClipboardText } from '@tauri-apps/plugin-clipboard-manager'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useAuthStore } from './stores/auth'
-import { DEVICE_ACTIVE_WINDOW_MS, DEVICE_HEARTBEAT_INTERVAL_MS, activateSyncedClipboardItem, deleteSyncedClipboardItem, downloadImageChunks, observeDevices, observeWebClipboardItems, pruneSyncedClipboardItems, publishDevicePresence, publishWebClipboardItem, setSyncedClipboardItemPinned, type ConnectedDevice } from './services/firebase'
+import { currentDeviceId, deleteConnectedDevice, DEVICE_ACTIVE_WINDOW_MS, DEVICE_HEARTBEAT_INTERVAL_MS, activateSyncedClipboardItem, deleteSyncedClipboardItem, downloadImageChunks, observeDevices, observeWebClipboardItems, pruneSyncedClipboardItems, publishDevicePresence, publishWebClipboardItem, setSyncedClipboardItemPinned, type ConnectedDevice } from './services/firebase'
 import type { ClipboardItem } from './types'
 
 const LOCAL_CLIPBOARD_KEY = 'clipvyn-web-clipboard-v1'
@@ -74,6 +75,8 @@ const password = ref('')
 const loading = ref(localItems.length === 0)
 const error = ref<string | null>(null)
 const deviceError = ref<string | null>(null)
+const deletingDeviceId = ref<string | null>(null)
+const thisDeviceId = currentDeviceId()
 const currentAppVersion = ref<string | null>(null)
 const updateChecking = ref(false)
 const updateAvailable = ref(false)
@@ -81,6 +84,8 @@ const updateStatus = ref<string | null>(null)
 const updateUrl = ref<string | null>(null)
 const pasting = ref(false)
 const copiedItemId = ref<string | null>(null)
+const actionNotice = ref<string | null>(null)
+const downloadingImageId = ref<string | null>(null)
 const activeSection = ref<'clipboard' | 'devices' | 'settings'>('clipboard')
 const mobilePreviewOpen = ref(false)
 const devices = ref<ConnectedDevice[]>([])
@@ -174,8 +179,9 @@ async function copy(item: ClipboardItem) {
     } else throw new Error('This clipboard item is unavailable')
     if (auth.user) await activateSyncedClipboardItem(auth.user.uid, item, webDeviceName())
     copiedItemId.value = item.id
+    actionNotice.value = 'Copied to clipboard'
     if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
-    copyFeedbackTimer = setTimeout(() => { copiedItemId.value = null }, 2200)
+    copyFeedbackTimer = setTimeout(() => { copiedItemId.value = null; actionNotice.value = null }, 2200)
   } catch (reason) {
     error.value = reason instanceof Error && reason.name === 'NotAllowedError'
       ? 'Allow clipboard permission in your browser, then try again.'
@@ -330,9 +336,61 @@ async function removeItem(item: ClipboardItem) {
     if (auth.user) await deleteSyncedClipboardItem(auth.user.uid, item)
   } catch (reason) { error.value = reason instanceof Error ? reason.message : String(reason) }
 }
+function imageFilename(createdAt: number): string {
+  const timestamp = new Date(createdAt).toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '')
+  return `clipvyn-${timestamp}.png`
+}
+function imageDataUrlToBlob(dataUrl: string): Blob {
+  const encoded = dataUrl.split(',', 2)[1]
+  if (!encoded) throw new Error('Image data is unavailable')
+  const binary = atob(encoded)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+  return new Blob([bytes], { type: 'image/png' })
+}
+async function downloadImage(item: ClipboardItem) {
+  if (item.kind !== 'image' || !item.previewDataUrl || downloadingImageId.value) return
+  downloadingImageId.value = item.id
+  error.value = null
+  try {
+    const blob = imageDataUrlToBlob(item.previewDataUrl)
+    const filename = imageFilename(item.createdAt)
+    const file = new File([blob], filename, { type: 'image/png' })
+    if (isAndroidCompanion && navigator.canShare?.({ files: [file] })) {
+      await navigator.share({ files: [file], title: 'Clipvyn clipboard image' })
+    } else {
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url; link.download = filename
+      document.body.appendChild(link); link.click(); link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    }
+    actionNotice.value = isAndroidCompanion ? 'Choose where to save the image.' : 'Image download started.'
+    if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
+    copyFeedbackTimer = setTimeout(() => { actionNotice.value = null }, 3000)
+  } catch (reason) {
+    if (reason instanceof Error && reason.name === 'AbortError') return
+    error.value = `Unable to download image: ${reason instanceof Error ? reason.message : String(reason)}`
+  } finally {
+    downloadingImageId.value = null
+  }
+}
 function showSection(section: 'clipboard' | 'devices' | 'settings') { if (section === 'settings' && !auth.signedIn && !isAndroidCompanion) return; activeSection.value = section; mobilePreviewOpen.value = false }
 function deviceIsOnline(device: ConnectedDevice) { return device.id === 'local-web' || now.value - device.lastSeen < DEVICE_ACTIVE_WINDOW_MS }
 function deviceIcon(device: ConnectedDevice) { const platform = device.platform.toLowerCase(); return platform.includes('win') ? monitorIcon : platform.includes('mac') ? laptopIcon : smartphoneIcon }
+async function removeDevice(device: ConnectedDevice) {
+  if (!auth.user || device.id === thisDeviceId || deletingDeviceId.value) return
+  if (!window.confirm(`Remove ${device.name} from your device list? If Clipvyn is still open on that device, it may appear again.`)) return
+  deletingDeviceId.value = device.id
+  deviceError.value = null
+  try {
+    await deleteConnectedDevice(auth.user.uid, device.id)
+  } catch (reason) {
+    deviceError.value = `Remove device: ${reason instanceof Error ? reason.message : String(reason)}`
+  } finally {
+    deletingDeviceId.value = null
+  }
+}
 function refreshPresenceWhenVisible() {
   if (document.visibilityState !== 'visible') return
   void refreshPresence?.()
@@ -369,10 +427,10 @@ onMounted(() => { auth.initialize(); void syncAndroidClipboard(); if (isAndroidC
           <button class="paste-action" :disabled="pasting" @click="pasteFromClipboard"><Icon :icon="clipboardPasteIcon" aria-hidden="true" /> {{ pasting ? 'Pasting…' : 'Paste from clipboard' }}</button>
         </div>
       </header>
-      <div v-if="copiedItemId" class="copy-toast" role="status" aria-live="polite"><span aria-hidden="true"><Icon :icon="checkIcon" /></span> Copied to clipboard</div>
-      <template v-if="activeSection === 'clipboard'"><div class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]"><section class="panel web-list"><div class="mb-5 flex gap-2"><button v-for="tab in [['all','All'],['image','Images'],['text','Text']] as const" :key="tab[0]" class="filter" :class="filter === tab[0] && 'selected'" @click="filter = tab[0]">{{ tab[1] }}</button></div><p v-if="error" class="list-error">{{ error }}</p><div v-if="loading || !visible.length" class="empty">{{ loading ? 'Loading clipboard…' : search ? 'No matching clipboard items.' : 'No local clipboard items yet. Use Paste from clipboard to add one.' }}</div><div v-else class="space-y-3"><article v-for="item in visible" :key="item.id" class="clip-row"><button class="clip" :class="[selected?.id === item.id && 'clip-selected', item.pinned && 'clip-pinned']" @click="selectItem(item)"><div class="thumb" :class="item.kind === 'text' && 'text-thumb'"><img v-if="item.previewDataUrl" :src="item.previewDataUrl" alt="Clipboard preview" /><Icon v-else :icon="item.kind === 'image' ? imageIcon : fileTextIcon" aria-hidden="true" /></div><div class="min-w-0 flex-1 text-left"><b :class="item.kind === 'text' ? 'text-preview' : 'block truncate'">{{ item.kind === 'image' ? `Image · ${item.width} × ${item.height}` : item.textContent }}</b><p v-if="item.kind === 'image'" class="mt-1 truncate text-sm text-slate-400">PNG image</p><p class="mt-2 text-xs text-slate-500">● {{ item.sourceDevice }} · {{ age(item.createdAt) }}</p></div></button><div class="clip-actions"><button type="button" class="clip-pin" :class="item.pinned && 'pinned'" :aria-label="item.pinned ? 'Unpin clipboard item' : 'Pin clipboard item'" :title="item.pinned ? 'Unpin' : 'Pin'" @click="togglePinned(item)"><Icon :icon="pinIcon" aria-hidden="true" /></button><button type="button" class="clip-delete" aria-label="Delete clipboard item" title="Delete clipboard item" @click="removeItem(item)"><Icon :icon="trashIcon" aria-hidden="true" /></button></div></article></div></section><aside class="panel web-detail"><template v-if="selected"><div class="mb-4"><b>{{ selected.kind === 'image' ? `Image · ${selected.width} × ${selected.height}` : 'Text item' }}</b></div><div class="preview"><img v-if="selected.previewDataUrl" :src="selected.previewDataUrl" alt="Selected image" /><p v-else>{{ selected.textContent }}</p></div><dl class="info"><div><dt>Device</dt><dd>{{ selected.sourceDevice }}</dd></div><div><dt>Type</dt><dd>{{ selected.mimeType }}</dd></div><div><dt>Copied</dt><dd>{{ new Date(selected.createdAt).toLocaleString() }}</dd></div></dl><button class="primary mt-5 w-full" :disabled="isAndroidCompanion && selected.kind === 'image'" @click="copy(selected)">{{ selected.kind === 'image' ? isAndroidCompanion ? 'Image copy unavailable on Android' : 'Copy image' : 'Copy text' }}</button></template><div v-else class="empty">Select an item to view details.</div></aside></div>
-      <aside v-if="selected && mobilePreviewOpen" class="mobile-preview-sheet xl:hidden"><div class="flex items-center justify-between"><b>Preview</b><button aria-label="Close preview" @click="mobilePreviewOpen = false"><Icon :icon="xIcon" aria-hidden="true" /></button></div><img v-if="selected.previewDataUrl" :src="selected.previewDataUrl" alt="Selected preview" /><p v-else>{{ selected.textContent }}</p><button class="primary w-full" @click="copy(selected)">Copy text</button></aside></template>
-      <section v-else-if="activeSection === 'devices'" class="panel devices-panel"><div v-if="auth.signedIn && deviceError" class="empty">Device sync error: {{ deviceError }}</div><div v-else-if="auth.signedIn && !visibleDevices.length" class="empty">No device heartbeat yet. Open the desktop or web app while signed in.</div><div v-else class="space-y-3"><article v-for="device in visibleDevices" :key="device.id" class="device-card"><div class="device-icon"><Icon :icon="deviceIcon(device)" aria-hidden="true" /></div><div class="min-w-0 flex-1"><b class="block truncate">{{ device.name }}</b><p class="mt-1 text-sm text-slate-400">{{ device.platform }}</p><p class="mt-2 text-xs" :class="deviceIsOnline(device) ? 'text-emerald-400' : 'text-slate-500'">● {{ deviceIsOnline(device) ? 'Active recently' : `Last seen ${age(device.lastSeen)}` }}</p></div><span class="badge" :class="deviceIsOnline(device) ? 'device-online' : 'device-offline'">{{ deviceIsOnline(device) ? 'Active' : 'Inactive' }}</span></article></div></section>
+      <div v-if="actionNotice" class="copy-toast" role="status" aria-live="polite"><span aria-hidden="true"><Icon :icon="checkIcon" /></span> {{ actionNotice }}</div>
+      <template v-if="activeSection === 'clipboard'"><div class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]"><section class="panel web-list"><div class="mb-5 flex gap-2"><button v-for="tab in [['all','All'],['image','Images'],['text','Text']] as const" :key="tab[0]" class="filter" :class="filter === tab[0] && 'selected'" @click="filter = tab[0]">{{ tab[1] }}</button></div><p v-if="error" class="list-error">{{ error }}</p><div v-if="loading || !visible.length" class="empty">{{ loading ? 'Loading clipboard…' : search ? 'No matching clipboard items.' : 'No local clipboard items yet. Use Paste from clipboard to add one.' }}</div><div v-else class="space-y-3"><article v-for="item in visible" :key="item.id" class="clip-row"><button class="clip" :class="[selected?.id === item.id && 'clip-selected', item.pinned && 'clip-pinned']" @click="selectItem(item)"><div class="thumb" :class="item.kind === 'text' && 'text-thumb'"><img v-if="item.previewDataUrl" :src="item.previewDataUrl" alt="Clipboard preview" /><Icon v-else :icon="item.kind === 'image' ? imageIcon : fileTextIcon" aria-hidden="true" /></div><div class="min-w-0 flex-1 text-left"><b :class="item.kind === 'text' ? 'text-preview' : 'block truncate'">{{ item.kind === 'image' ? `Image · ${item.width} × ${item.height}` : item.textContent }}</b><p v-if="item.kind === 'image'" class="mt-1 truncate text-sm text-slate-400">PNG image</p><p class="mt-2 text-xs text-slate-500">● {{ item.sourceDevice }} · {{ age(item.createdAt) }}</p></div></button><div class="clip-actions"><button v-if="item.kind === 'image'" type="button" class="clip-download" :disabled="!item.previewDataUrl || downloadingImageId === item.id" aria-label="Download clipboard image" title="Download image" @click="downloadImage(item)"><Icon v-if="downloadingImageId !== item.id" :icon="downloadIcon" aria-hidden="true" /><span v-else class="delete-spinner" aria-hidden="true" /></button><button type="button" class="clip-pin" :class="item.pinned && 'pinned'" :aria-label="item.pinned ? 'Unpin clipboard item' : 'Pin clipboard item'" :title="item.pinned ? 'Unpin' : 'Pin'" @click="togglePinned(item)"><Icon :icon="pinIcon" aria-hidden="true" /></button><button type="button" class="clip-delete" aria-label="Delete clipboard item" title="Delete clipboard item" @click="removeItem(item)"><Icon :icon="trashIcon" aria-hidden="true" /></button></div></article></div></section><aside class="panel web-detail"><template v-if="selected"><div class="mb-4"><b>{{ selected.kind === 'image' ? `Image · ${selected.width} × ${selected.height}` : 'Text item' }}</b></div><div class="preview"><img v-if="selected.previewDataUrl" :src="selected.previewDataUrl" alt="Selected image" /><p v-else>{{ selected.textContent }}</p></div><dl class="info"><div><dt>Device</dt><dd>{{ selected.sourceDevice }}</dd></div><div><dt>Type</dt><dd>{{ selected.mimeType }}</dd></div><div><dt>Copied</dt><dd>{{ new Date(selected.createdAt).toLocaleString() }}</dd></div></dl><div class="detail-actions"><button class="primary" :disabled="isAndroidCompanion && selected.kind === 'image'" @click="copy(selected)">{{ selected.kind === 'image' ? isAndroidCompanion ? 'Image copy unavailable on Android' : 'Copy image' : 'Copy text' }}</button><button v-if="selected.kind === 'image'" class="secondary" :disabled="!selected.previewDataUrl || downloadingImageId === selected.id" @click="downloadImage(selected)"><Icon :icon="downloadIcon" aria-hidden="true" /> Download</button></div></template><div v-else class="empty">Select an item to view details.</div></aside></div>
+      <aside v-if="selected && mobilePreviewOpen" class="mobile-preview-sheet xl:hidden"><div class="flex items-center justify-between"><b>Preview</b><button aria-label="Close preview" @click="mobilePreviewOpen = false"><Icon :icon="xIcon" aria-hidden="true" /></button></div><img v-if="selected.previewDataUrl" :src="selected.previewDataUrl" alt="Selected preview" /><p v-else>{{ selected.textContent }}</p><div class="detail-actions"><button class="primary" :disabled="isAndroidCompanion && selected.kind === 'image'" @click="copy(selected)">{{ selected.kind === 'image' ? isAndroidCompanion ? 'Image copy unavailable' : 'Copy image' : 'Copy text' }}</button><button v-if="selected.kind === 'image'" class="secondary" :disabled="!selected.previewDataUrl || downloadingImageId === selected.id" @click="downloadImage(selected)"><Icon :icon="downloadIcon" aria-hidden="true" /> Download</button></div></aside></template>
+      <section v-else-if="activeSection === 'devices'" class="panel devices-panel"><div v-if="auth.signedIn && deviceError" class="list-error mb-3">Device sync error: {{ deviceError }}</div><div v-if="auth.signedIn && !visibleDevices.length" class="empty">No device heartbeat yet. Open the desktop or web app while signed in.</div><div v-else class="space-y-3"><article v-for="device in visibleDevices" :key="device.id" class="device-card"><div class="device-icon"><Icon :icon="deviceIcon(device)" aria-hidden="true" /></div><div class="min-w-0 flex-1"><b class="block truncate">{{ device.name }}</b><p class="mt-1 text-sm text-slate-400">{{ device.platform }}</p><p class="mt-2 text-xs" :class="deviceIsOnline(device) ? 'text-emerald-400' : 'text-slate-500'">● {{ deviceIsOnline(device) ? 'Active recently' : `Last seen ${age(device.lastSeen)}` }}</p></div><div class="device-actions"><span class="badge" :class="deviceIsOnline(device) ? 'device-online' : 'device-offline'">{{ device.id === thisDeviceId ? 'This device' : deviceIsOnline(device) ? 'Active' : 'Inactive' }}</span><button v-if="auth.signedIn && device.id !== thisDeviceId" type="button" class="device-delete" :disabled="deletingDeviceId === device.id" :aria-label="`Remove ${device.name}`" title="Remove device" @click="removeDevice(device)"><Icon v-if="deletingDeviceId !== device.id" :icon="trashIcon" aria-hidden="true" /><span v-else class="delete-spinner" aria-hidden="true" /></button></div></article></div></section>
       <section v-else class="panel settings-panel">
         <h2 class="text-lg font-semibold">Sync settings</h2>
         <div v-if="isAndroidCompanion" class="setting-row android-update-setting">

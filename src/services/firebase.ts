@@ -116,6 +116,16 @@ function deviceId(): string {
   }
 }
 
+export function currentDeviceId(): string {
+  return deviceId()
+}
+
+export async function deleteConnectedDevice(uid: string, id: string): Promise<void> {
+  if (!firestore) throw new Error(firebaseConfigurationError ?? 'Firebase is not configured')
+  if (!id || id === deviceId()) throw new Error('The current device cannot be removed')
+  await deleteDoc(doc(userDevices(uid), id))
+}
+
 export async function publishDevicePresence(
   uid: string,
   appKind: 'Web' | 'Desktop' | 'Android',

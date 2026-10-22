@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { Icon } from '@iconify/vue'
 import clipboardIcon from '@iconify-icons/lucide/clipboard'
+import downloadIcon from '@iconify-icons/lucide/download'
 import fileTextIcon from '@iconify-icons/lucide/file-text'
 import imageIcon from '@iconify-icons/lucide/image'
 import laptopIcon from '@iconify-icons/lucide/laptop'
@@ -20,8 +21,8 @@ import { isRegistered, register, unregister, type ShortcutEvent } from '@tauri-a
 import { relaunch } from '@tauri-apps/plugin-process'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 
-import { DEVICE_ACTIVE_WINDOW_MS, observeDevices, type ConnectedDevice } from './services/firebase'
-import { getLocalDeviceInfo, isLaunchAtLoginEnabled, revealDesktopApplication, setLaunchAtLogin } from './services/clipboard'
+import { currentDeviceId, deleteConnectedDevice, DEVICE_ACTIVE_WINDOW_MS, observeDevices, type ConnectedDevice } from './services/firebase'
+import { getLocalDeviceInfo, isLaunchAtLoginEnabled, readLocalImage, revealDesktopApplication, setLaunchAtLogin } from './services/clipboard'
 import { useAuthStore } from './stores/auth'
 import { useClipboardStore } from './stores/clipboard'
 import type { ClipboardItem } from './types'
@@ -37,6 +38,10 @@ const password = ref('')
 const devices = ref<ConnectedDevice[]>([])
 const localDevice = ref<ConnectedDevice>({ id: 'local-desktop', name: 'This device', platform: navigator.platform || 'Desktop', lastSeen: Date.now(), online: true })
 const deviceError = ref<string | null>(null)
+const deletingDeviceId = ref<string | null>(null)
+const thisDeviceId = currentDeviceId()
+const downloadingImageId = ref<string | null>(null)
+const imageDownloadNotice = ref<string | null>(null)
 const now = ref(Date.now())
 const shortcutOptions = [
   { value: 'CommandOrControl+Shift+Space', label: 'Cmd/Ctrl + Shift + Space' },
@@ -60,6 +65,7 @@ const updateTotal = ref<number | null>(null)
 let stopDevices: Unsubscribe | null = null
 let clockTimer: ReturnType<typeof setInterval> | null = null
 let activeShortcut: string | null = null
+let imageDownloadNoticeTimer: ReturnType<typeof setTimeout> | null = null
 
 const visibleItems = computed(() => store.items.filter((item) => filter.value === 'all' || item.kind === filter.value))
 const visibleDevices = computed(() => auth.signedIn ? devices.value : [localDevice.value])
@@ -112,6 +118,47 @@ function onSearch(event: Event) { store.scheduleSearch((event.target as HTMLInpu
 function deviceIsActive(device: ConnectedDevice) { return device.id === 'local-desktop' || now.value - device.lastSeen < DEVICE_ACTIVE_WINDOW_MS }
 function deviceIcon(device: ConnectedDevice) { const platform = device.platform.toLowerCase(); return platform.includes('win') ? monitorIcon : platform.includes('mac') ? laptopIcon : smartphoneIcon }
 function age(value: number) { const min = Math.floor((Date.now() - value) / 60000); return min < 1 ? 'now' : min < 60 ? `${min}m ago` : `${Math.floor(min / 60)}h ago` }
+
+async function removeDevice(device: ConnectedDevice) {
+  if (!auth.user || device.id === thisDeviceId || deletingDeviceId.value) return
+  if (!window.confirm(`Remove ${device.name} from your device list? If Clipvyn is still open on that device, it may appear again.`)) return
+  deletingDeviceId.value = device.id
+  deviceError.value = null
+  try {
+    await deleteConnectedDevice(auth.user.uid, device.id)
+  } catch (reason) {
+    deviceError.value = `Remove device: ${reason instanceof Error ? reason.message : String(reason)}`
+  } finally {
+    deletingDeviceId.value = null
+  }
+}
+
+function imageFilename(createdAt: number): string {
+  const timestamp = new Date(createdAt).toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '')
+  return `clipvyn-${timestamp}.png`
+}
+
+async function downloadImage(item: ClipboardItem) {
+  if (item.kind !== 'image' || downloadingImageId.value) return
+  downloadingImageId.value = item.id
+  imageDownloadNotice.value = null
+  try {
+    const pngBase64 = await readLocalImage(item.id)
+    const link = document.createElement('a')
+    link.href = `data:image/png;base64,${pngBase64}`
+    link.download = imageFilename(item.createdAt)
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    imageDownloadNotice.value = 'Image download started.'
+    if (imageDownloadNoticeTimer) clearTimeout(imageDownloadNoticeTimer)
+    imageDownloadNoticeTimer = setTimeout(() => { imageDownloadNotice.value = null }, 3000)
+  } catch (reason) {
+    imageDownloadNotice.value = `Unable to download image: ${reason instanceof Error ? reason.message : String(reason)}`
+  } finally {
+    downloadingImageId.value = null
+  }
+}
 
 async function revealApplication(event: ShortcutEvent) {
   if (event.state !== 'Pressed') return
@@ -280,6 +327,7 @@ onBeforeUnmount(() => {
   if (clockTimer) clearInterval(clockTimer)
   if (activeShortcut) void unregister(activeShortcut)
   if (availableUpdate.value && !updateBusy.value) void availableUpdate.value.close()
+  if (imageDownloadNoticeTimer) clearTimeout(imageDownloadNoticeTimer)
   store.dispose()
   auth.dispose()
 })
@@ -304,6 +352,7 @@ onBeforeUnmount(() => {
       </header>
 
       <p v-if="store.syncError" class="mb-4 rounded-xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm text-rose-200">{{ store.syncError }}</p>
+      <div v-if="imageDownloadNotice" class="paste-notice copy-toast" role="status" aria-live="polite"><span>{{ imageDownloadNotice }}</span><button type="button" aria-label="Dismiss download notice" @click="imageDownloadNotice = null"><Icon :icon="xIcon" aria-hidden="true" /></button></div>
       <div v-if="store.pasteNotice" class="paste-notice" :class="store.pasteNoticeKind === 'success' && 'copy-toast'" role="status" aria-live="polite"><span>{{ store.pasteNotice }}</span><button type="button" aria-label="Dismiss paste notice" @click="store.pasteNotice = null; store.pasteNoticeKind = null"><Icon :icon="xIcon" aria-hidden="true" /></button></div>
 
       <section v-if="activeSection === 'settings' || availableUpdate" class="update-panel" aria-live="polite">
@@ -330,11 +379,11 @@ onBeforeUnmount(() => {
           <div class="mb-5 flex gap-2"><button v-for="tab in [['all','All'],['image','Images'],['text','Text']] as const" :key="tab[0]" class="filter" :class="filter === tab[0] && 'selected'" @click="filter = tab[0]">{{ tab[1] }}</button></div>
           <p v-if="store.error" class="list-error">{{ store.error }}</p>
           <div v-if="store.loading || !visibleItems.length" class="empty">{{ store.loading ? 'Loading clipboard…' : store.query ? 'No matching clipboard items.' : 'Copy text or an image and it will appear here.' }}</div>
-          <div v-else class="space-y-3"><article v-for="item in visibleItems" :key="item.id" class="clip-row"><button class="clip" :class="[selectedId === item.id && 'clip-selected', item.pinned && 'clip-pinned']" :disabled="store.restoringId === item.id" @click="pasteItem(item)"><div class="thumb" :class="item.kind === 'text' && 'text-thumb'"><img v-if="item.previewDataUrl" :src="item.previewDataUrl" alt="Clipboard preview" /><Icon v-else :icon="item.kind === 'image' ? imageIcon : fileTextIcon" aria-hidden="true" /></div><div class="min-w-0 flex-1 text-left"><b :class="item.kind === 'text' ? 'text-preview' : 'block truncate'">{{ item.kind === 'image' ? `Image · ${item.width} × ${item.height}` : item.textContent }}</b><p v-if="item.kind === 'image'" class="mt-1 truncate text-sm text-slate-400">PNG image</p><p class="mt-2 text-xs text-slate-500">● {{ item.sourceDevice }} · {{ age(item.createdAt) }}</p></div><span v-if="store.restoringId === item.id" class="badge">Pasting…</span></button><div class="clip-actions"><button type="button" class="clip-pin" :class="item.pinned && 'pinned'" :aria-label="item.pinned ? 'Unpin clipboard item' : 'Pin clipboard item'" :title="item.pinned ? 'Unpin' : 'Pin'" @click="store.togglePinned(item.id)"><Icon :icon="pinIcon" aria-hidden="true" /></button><button type="button" class="clip-delete" :disabled="store.deletingId === item.id" aria-label="Delete clipboard item" title="Delete clipboard item" @click="store.remove(item.id)"><Icon v-if="store.deletingId !== item.id" :icon="trashIcon" aria-hidden="true" /><span v-else class="delete-spinner" aria-hidden="true" /></button></div></article></div>
+          <div v-else class="space-y-3"><article v-for="item in visibleItems" :key="item.id" class="clip-row"><button class="clip" :class="[selectedId === item.id && 'clip-selected', item.pinned && 'clip-pinned']" :disabled="store.restoringId === item.id" @click="pasteItem(item)"><div class="thumb" :class="item.kind === 'text' && 'text-thumb'"><img v-if="item.previewDataUrl" :src="item.previewDataUrl" alt="Clipboard preview" /><Icon v-else :icon="item.kind === 'image' ? imageIcon : fileTextIcon" aria-hidden="true" /></div><div class="min-w-0 flex-1 text-left"><b :class="item.kind === 'text' ? 'text-preview' : 'block truncate'">{{ item.kind === 'image' ? `Image · ${item.width} × ${item.height}` : item.textContent }}</b><p v-if="item.kind === 'image'" class="mt-1 truncate text-sm text-slate-400">PNG image</p><p class="mt-2 text-xs text-slate-500">● {{ item.sourceDevice }} · {{ age(item.createdAt) }}</p></div><span v-if="store.restoringId === item.id" class="badge">Pasting…</span></button><div class="clip-actions"><button v-if="item.kind === 'image'" type="button" class="clip-download" :disabled="downloadingImageId === item.id" aria-label="Download clipboard image" title="Download image" @click="downloadImage(item)"><Icon v-if="downloadingImageId !== item.id" :icon="downloadIcon" aria-hidden="true" /><span v-else class="delete-spinner" aria-hidden="true" /></button><button type="button" class="clip-pin" :class="item.pinned && 'pinned'" :aria-label="item.pinned ? 'Unpin clipboard item' : 'Pin clipboard item'" :title="item.pinned ? 'Unpin' : 'Pin'" @click="store.togglePinned(item.id)"><Icon :icon="pinIcon" aria-hidden="true" /></button><button type="button" class="clip-delete" :disabled="store.deletingId === item.id" aria-label="Delete clipboard item" title="Delete clipboard item" @click="store.remove(item.id)"><Icon v-if="store.deletingId !== item.id" :icon="trashIcon" aria-hidden="true" /><span v-else class="delete-spinner" aria-hidden="true" /></button></div></article></div>
         </section>
       </template>
 
-      <section v-else-if="activeSection === 'devices'" class="panel devices-panel"><div v-if="auth.signedIn && deviceError" class="empty">Device sync error: {{ deviceError }}</div><div v-else-if="auth.signedIn && !visibleDevices.length" class="empty">No device heartbeat yet.</div><div v-else class="space-y-3"><article v-for="device in visibleDevices" :key="device.id" class="device-card"><div class="device-icon"><Icon :icon="deviceIcon(device)" aria-hidden="true" /></div><div class="min-w-0 flex-1"><b class="block truncate">{{ device.name }}</b><p class="mt-1 text-sm text-slate-400">{{ device.platform }}</p><p class="mt-2 text-xs" :class="deviceIsActive(device) ? 'text-emerald-400' : 'text-slate-500'">● {{ deviceIsActive(device) ? 'Active recently' : `Last seen ${age(device.lastSeen)}` }}</p></div><span class="badge" :class="deviceIsActive(device) ? 'device-online' : 'device-offline'">{{ deviceIsActive(device) ? 'Active' : 'Inactive' }}</span></article></div></section>
+      <section v-else-if="activeSection === 'devices'" class="panel devices-panel"><div v-if="auth.signedIn && deviceError" class="list-error mb-3">Device sync error: {{ deviceError }}</div><div v-if="auth.signedIn && !visibleDevices.length" class="empty">No device heartbeat yet.</div><div v-else class="space-y-3"><article v-for="device in visibleDevices" :key="device.id" class="device-card"><div class="device-icon"><Icon :icon="deviceIcon(device)" aria-hidden="true" /></div><div class="min-w-0 flex-1"><b class="block truncate">{{ device.name }}</b><p class="mt-1 text-sm text-slate-400">{{ device.platform }}</p><p class="mt-2 text-xs" :class="deviceIsActive(device) ? 'text-emerald-400' : 'text-slate-500'">● {{ deviceIsActive(device) ? 'Active recently' : `Last seen ${age(device.lastSeen)}` }}</p></div><div class="device-actions"><span class="badge" :class="deviceIsActive(device) ? 'device-online' : 'device-offline'">{{ device.id === thisDeviceId ? 'This device' : deviceIsActive(device) ? 'Active' : 'Inactive' }}</span><button v-if="auth.signedIn && device.id !== thisDeviceId" type="button" class="device-delete" :disabled="deletingDeviceId === device.id" :aria-label="`Remove ${device.name}`" title="Remove device" @click="removeDevice(device)"><Icon v-if="deletingDeviceId !== device.id" :icon="trashIcon" aria-hidden="true" /><span v-else class="delete-spinner" aria-hidden="true" /></button></div></article></div></section>
 
       <section v-else class="panel settings-panel"><h2 class="text-lg font-semibold">Sync settings</h2><div class="setting-row"><div><b>Automatic capture</b><p>New clipboard items are captured and synced immediately.</p></div><span class="setting-on">On</span></div><div class="setting-row"><div><b>Launch at login</b><p>Open Clipvyn automatically when you sign in to macOS or Windows.</p><p v-if="launchAtLoginError" class="shortcut-error">{{ launchAtLoginError }}</p></div><button type="button" role="switch" :aria-checked="launchAtLoginEnabled" :disabled="launchAtLoginBusy" class="shortcut-toggle" :class="launchAtLoginEnabled && 'enabled'" @click="toggleLaunchAtLogin"><span /></button></div><div class="setting-row shortcut-setting"><div><b>Open app shortcut</b><p>Shows and focuses the app while it is running.</p><p v-if="shortcutError" class="shortcut-error">{{ shortcutError }}</p></div><div class="shortcut-controls"><select :value="shortcutValue" :disabled="shortcutBusy" aria-label="Global shortcut" @change="changeShortcut"><option v-for="option in shortcutOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select><button type="button" role="switch" :aria-checked="shortcutEnabled" :disabled="shortcutBusy" class="shortcut-toggle" :class="shortcutEnabled && 'enabled'" @click="toggleShortcut"><span /></button></div></div><div class="setting-row"><div><b>Device status</b><p>Presence refreshes every 10 minutes.</p></div><span>10 min</span></div><div class="setting-row"><div><b>Clipboard history</b><p>Stores the latest 80 items and shows up to 50 matching items.</p></div><span>80 / 50</span></div></section>
     </section>
