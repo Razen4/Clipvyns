@@ -16,6 +16,8 @@ use uuid::Uuid;
 use crate::{AppError, AppState, database::NewItem, model::StoredItem};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(450);
+#[cfg(target_os = "macos")]
+const MACOS_ANSI_V_KEYCODE: u16 = 9;
 
 pub fn start_watcher(app: AppHandle, state: AppState) {
     thread::Builder::new()
@@ -227,6 +229,14 @@ pub fn paste_shortcut() -> Result<(), PasteShortcutError> {
     keyboard
         .key(modifier, Direction::Press)
         .map_err(|error| PasteShortcutError::Other(input_error(error)))?;
+    // A Unicode `v` is layout-dependent on macOS and cannot be resolved while
+    // input sources such as Thai are active. Send the physical ANSI V key so
+    // Command+V works regardless of the selected keyboard language.
+    #[cfg(target_os = "macos")]
+    let paste_result = keyboard
+        .raw(MACOS_ANSI_V_KEYCODE, Direction::Click)
+        .map_err(|error| PasteShortcutError::Other(input_error(error)));
+    #[cfg(not(target_os = "macos"))]
     let paste_result = keyboard
         .key(Key::Unicode('v'), Direction::Click)
         .map_err(|error| PasteShortcutError::Other(input_error(error)));
