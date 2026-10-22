@@ -118,7 +118,7 @@ function deviceId(): string {
 
 export async function publishDevicePresence(
   uid: string,
-  appKind: 'Web' | 'Desktop',
+  appKind: 'Web' | 'Desktop' | 'Android',
   device?: { name: string; platform: string },
 ): Promise<void> {
   if (!firestore) return

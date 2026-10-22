@@ -3,6 +3,7 @@
   "identifier": "desktop-default",
   "description": "Minimum core permissions for the clipboard history window",
   "windows": ["main"],
+  "platforms": ["macOS", "windows", "linux"],
   "permissions": [
     "core:default",
     "autostart:allow-enable",

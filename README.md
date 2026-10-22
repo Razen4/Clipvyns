@@ -2,7 +2,7 @@
 
 A compact macOS and Windows clipboard-history application built with Tauri 2, Vue 3, TypeScript, Pinia, Tailwind CSS, Rust, and SQLite.
 
-Current version: **0.0.12**
+Current version: **0.0.16**
 
 ## Current implementation
 
@@ -62,6 +62,32 @@ The macOS bundles are written to `src-tauri/target/release/bundle/macos/` and
 `src-tauri/target/release/bundle/dmg/`. A Mac or macOS CI runner is required;
 macOS bundles cannot be produced locally on Windows.
 
+### Android companion
+
+The Android companion signs in to the same Firebase account as the desktop
+apps. It synchronizes text clipboard items, copies a selected item into the
+Android system clipboard, and appears in Android's **Share** menu for plain
+text. Opening or returning to the companion imports new clipboard text and
+sends it to signed-in macOS and Windows devices.
+
+Android 10 and newer do not allow an ordinary background app to continuously
+read the clipboard. The companion therefore imports clipboard text only while
+it is visible; sharing text directly to Clipvyn is the most reliable workflow.
+Image history remains visible but native image copy/share is not included in
+this first companion release.
+
+After installing JDK 17, the Android SDK Platform/Build Tools, NDK, and Android
+Rust targets, build the arm64 APK with:
+
+```sh
+npm run build:android
+```
+
+The APK is written beneath
+`src-tauri/gen/android/app/build/outputs/apk/universal/release/`. A distributable
+release must be signed with the same protected Android signing key for every
+future update.
+
 To build Windows x64 plus macOS Apple Silicon and Intel in one GitHub Actions
 run, add these repository Actions secrets, then run the **Build desktop
 installers** workflow:
@@ -107,8 +133,8 @@ Get-Content -Raw "$env:USERPROFILE\.tauri\clipboard-sharings.key" |
 Update and verify all application version fields from any development machine:
 
 ```sh
-npm run version:set -- 0.0.12
-npm run version:check -- 0.0.12
+npm run version:set -- 0.0.16
+npm run version:check -- 0.0.16
 npm run build
 ```
 
@@ -116,9 +142,9 @@ Only when a release is ready and pushing has been explicitly authorized:
 
 ```sh
 git add .
-git commit -m "chore: release v0.0.12"
-git tag v0.0.12
-git push origin main v0.0.12
+git commit -m "chore: release v0.0.16"
+git tag v0.0.16
+git push origin main v0.0.16
 ```
 
 The workflow rejects a tag whose version does not match `package.json`,

@@ -5,9 +5,10 @@ import WebApp from './WebApp.vue'
 import './styles.css'
 
 const isTauri = '__TAURI_INTERNALS__' in window
+const isAndroid = /Android/i.test(navigator.userAgent)
 if (!isTauri) {
   void import('virtual:pwa-register').then(({ registerSW }) => registerSW({ immediate: true }))
 }
 
-const Root = isTauri ? App : WebApp
+const Root = isTauri && !isAndroid ? App : WebApp
 createApp(Root).use(createPinia()).mount('#app')
