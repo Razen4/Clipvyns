@@ -19,6 +19,7 @@ import userIcon from '@iconify-icons/lucide/user'
 import xIcon from '@iconify-icons/lucide/x'
 import type { Unsubscribe } from 'firebase/firestore'
 import { getVersion } from '@tauri-apps/api/app'
+import { invoke } from '@tauri-apps/api/core'
 import { readText as readNativeClipboardText, writeText as writeNativeClipboardText } from '@tauri-apps/plugin-clipboard-manager'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { useAuthStore } from './stores/auth'
@@ -355,17 +356,20 @@ async function downloadImage(item: ClipboardItem) {
   try {
     const blob = imageDataUrlToBlob(item.previewDataUrl)
     const filename = imageFilename(item.createdAt)
-    const file = new File([blob], filename, { type: 'image/png' })
-    if (isAndroidCompanion && navigator.canShare?.({ files: [file] })) {
-      await navigator.share({ files: [file], title: 'Clipvyn clipboard image' })
+    if (isAndroidCompanion) {
+      const result = await invoke<{ fileName: string; location: string }>('save_image_to_device', {
+        fileName: filename,
+        dataBase64: item.previewDataUrl.split(',', 2)[1],
+      })
+      actionNotice.value = `Saved to ${result.location}`
     } else {
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url; link.download = filename
       document.body.appendChild(link); link.click(); link.remove()
       setTimeout(() => URL.revokeObjectURL(url), 1000)
+      actionNotice.value = 'Image download started.'
     }
-    actionNotice.value = isAndroidCompanion ? 'Choose where to save the image.' : 'Image download started.'
     if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer)
     copyFeedbackTimer = setTimeout(() => { actionNotice.value = null }, 3000)
   } catch (reason) {
