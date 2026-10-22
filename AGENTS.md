@@ -27,11 +27,13 @@ These instructions apply to the entire repository.
   ```
 
 - Report the new version and verification results in the final response.
-- Do not create commits, tags, releases, or push to a remote unless the user explicitly asks. A user request to update the application counts as authorization to publish the matching release artifacts described below, but does not authorize unrelated commits or pushes. When authorized to release, the tag must be exactly `v<new-version>` and must match all version files before it is pushed.
+- Do not create commits, tags, releases, build distributable release artifacts, upload APKs, or push to a remote unless the user explicitly confirms that they want the release to be created.
+- A request to change or update the application does not by itself authorize release creation or publication. After the implementation, version update, and required checks are complete, ask the user whether they want to create and publish the GitHub Release and APK. Wait for an affirmative response before continuing with any release-delivery action.
+- When authorized to release, the tag must be exactly `v<new-version>` and must match all version files before it is pushed.
 
 ## Release delivery
 
-- Every completed application update must update both of these delivery channels:
+- After the user explicitly confirms release creation, update both of these delivery channels:
   1. Create or update the GitHub Release for `v<new-version>`, including the desktop installers and release notes.
   2. Build the Android Companion APK for the same version and upload it to the APK Google Drive folder: `https://drive.google.com/drive/folders/1n0X_nmqFZ_INENXt9USzFI3VNiiZC92I`.
 - Name the Android artifact `Clipvyn-Companion-<new-version>-arm64.apk` unless the target architecture changes.
