@@ -9,7 +9,11 @@ use database::Database;
 use image::ImageFormat;
 use model::ClipboardItem;
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, State};
+use tauri::{
+    Manager, State,
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -143,9 +147,21 @@ fn paste_shortcut_on_main_thread(
 }
 
 #[tauri::command]
-fn reveal_application(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<(), AppError> {
+fn reveal_application(app: tauri::AppHandle) -> Result<(), AppError> {
+    show_main_window(&app)
+}
+
+#[tauri::command]
+fn hide_application(window: tauri::WebviewWindow) -> Result<(), AppError> {
+    window.hide().map_err(tauri_error)
+}
+
+fn show_main_window(app: &tauri::AppHandle) -> Result<(), AppError> {
     #[cfg(target_os = "macos")]
     app.show().map_err(tauri_error)?;
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| AppError::Message("main window is unavailable".into()))?;
     window.show().map_err(tauri_error)?;
     window.unminimize().map_err(tauri_error)?;
     window.set_focus().map_err(tauri_error)
@@ -413,7 +429,17 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_autostart::Builder::new().build());
+        .plugin(tauri_plugin_autostart::Builder::new().build())
+        .on_window_event(|window, event| {
+            if window.label() == "main"
+                && let tauri::WindowEvent::CloseRequested { api, .. } = event
+            {
+                api.prevent_close();
+                if let Err(error) = window.hide() {
+                    eprintln!("failed to hide Clipvyn window: {error}");
+                }
+            }
+        });
 
     builder
         .setup(|app| {
@@ -431,11 +457,44 @@ pub fn run() {
                 .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
             app.manage(state.clone());
             clipboard::start_watcher(app.handle().clone(), state);
+
+            let show_item = MenuItem::with_id(app, "show", "Show Clipvyn", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit Clipvyn", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let mut tray = TrayIconBuilder::with_id("clipvyn")
+                .menu(&tray_menu)
+                .tooltip("Clipvyn · Running in background")
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| {
+                    if event.id() == "show" {
+                        if let Err(error) = show_main_window(app) {
+                            eprintln!("failed to show Clipvyn from tray: {error}");
+                        }
+                    } else if event.id() == "quit" {
+                        app.exit(0);
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                        && let Err(error) = show_main_window(tray.app_handle())
+                    {
+                        eprintln!("failed to show Clipvyn from tray: {error}");
+                    }
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+            tray.build(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_local_device_info,
             reveal_application,
+            hide_application,
             list_clipboard_items,
             paste_clipboard_item,
             restore_clipboard_item_by_hash,

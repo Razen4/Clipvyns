@@ -21,9 +21,8 @@ import type { Unsubscribe } from 'firebase/firestore'
 import { getVersion } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { readText as readNativeClipboardText, writeText as writeNativeClipboardText } from '@tauri-apps/plugin-clipboard-manager'
-import { openUrl } from '@tauri-apps/plugin-opener'
 import { useAuthStore } from './stores/auth'
-import { currentDeviceId, deleteConnectedDevice, DEVICE_ACTIVE_WINDOW_MS, DEVICE_HEARTBEAT_INTERVAL_MS, activateSyncedClipboardItem, deleteSyncedClipboardItem, downloadImageChunks, observeDevices, observeWebClipboardItems, pruneSyncedClipboardItems, publishDevicePresence, publishWebClipboardItem, setSyncedClipboardItemPinned, type ConnectedDevice } from './services/firebase'
+import { currentDeviceId, deleteConnectedDevice, DEVICE_ACCESS_REVOKED_MESSAGE, DEVICE_ACTIVE_WINDOW_MS, DEVICE_HEARTBEAT_INTERVAL_MS, activateSyncedClipboardItem, deleteSyncedClipboardItem, downloadImageChunks, observeDevices, observeWebClipboardItems, pruneSyncedClipboardItems, publishDevicePresence, publishWebClipboardItem, setSyncedClipboardItemPinned, type ConnectedDevice } from './services/firebase'
 import type { ClipboardItem } from './types'
 
 const LOCAL_CLIPBOARD_KEY = 'clipvyn-web-clipboard-v1'
@@ -80,9 +79,11 @@ const deletingDeviceId = ref<string | null>(null)
 const thisDeviceId = currentDeviceId()
 const currentAppVersion = ref<string | null>(null)
 const updateChecking = ref(false)
+const updateInstalling = ref(false)
 const updateAvailable = ref(false)
 const updateStatus = ref<string | null>(null)
 const updateUrl = ref<string | null>(null)
+const updateVersion = ref<string | null>(null)
 const pasting = ref(false)
 const copiedItemId = ref<string | null>(null)
 const actionNotice = ref<string | null>(null)
@@ -165,6 +166,9 @@ watch([() => auth.ready, () => auth.user?.uid] as const, ([ready, uid]) => {
     syncReady.value = false
   })
 }, { immediate: true })
+watch(() => auth.notice, (notice) => {
+  if (notice === DEVICE_ACCESS_REVOKED_MESSAGE) loginOpen.value = true
+})
 async function submit() { try { await auth.submit(email.value.trim(), password.value); loginOpen.value = false } catch { /* exposed by auth store */ } }
 async function copy(item: ClipboardItem) {
   try {
@@ -239,7 +243,7 @@ function compareVersions(left: string, right: string): number {
 }
 async function checkAndroidUpdate() {
   if (!isAndroidCompanion) return
-  updateChecking.value = true; updateStatus.value = null; updateAvailable.value = false; updateUrl.value = null
+  updateChecking.value = true; updateStatus.value = null; updateAvailable.value = false; updateUrl.value = null; updateVersion.value = null
   try {
     const current = currentAppVersion.value || await getVersion()
     currentAppVersion.value = current
@@ -249,7 +253,6 @@ async function checkAndroidUpdate() {
     if (!response.ok) throw new Error(`GitHub returned ${response.status}`)
     const release = await response.json() as {
       tag_name?: string
-      html_url?: string
       assets?: Array<{ name?: string; browser_download_url?: string }>
     }
     const latest = release.tag_name?.replace(/^v/, '')
@@ -258,11 +261,13 @@ async function checkAndroidUpdate() {
       updateStatus.value = `Clipvyn ${current} is the latest version.`
       return
     }
-    const apk = release.assets?.find((asset) => asset.name?.toLowerCase().endsWith('.apk'))
-    updateAvailable.value = true
-    updateUrl.value = apk?.browser_download_url || release.html_url || 'https://github.com/Razen4/Clipvyns/releases/latest'
+    const apkAssets = release.assets?.filter((asset) => asset.name?.toLowerCase().endsWith('.apk')) || []
+    const apk = apkAssets.find((asset) => asset.name?.toLowerCase().includes('arm64')) || apkAssets[0]
+    updateAvailable.value = Boolean(apk?.browser_download_url)
+    updateUrl.value = apk?.browser_download_url || null
+    updateVersion.value = apk?.browser_download_url ? latest : null
     updateStatus.value = apk
-      ? `Clipvyn ${latest} is available. Download the APK to update.`
+      ? `Clipvyn ${latest} is available. Download and install it directly from Clipvyn.`
       : `Clipvyn ${latest} is available. The release page does not include an APK yet.`
   } catch (reason) {
     updateStatus.value = `Unable to check for updates: ${reason instanceof Error ? reason.message : String(reason)}`
@@ -270,8 +275,21 @@ async function checkAndroidUpdate() {
     updateChecking.value = false
   }
 }
-async function openAndroidUpdate() {
-  await openUrl(updateUrl.value || 'https://github.com/Razen4/Clipvyns/releases/latest')
+async function installAndroidUpdate() {
+  if (!updateUrl.value || !updateVersion.value || updateInstalling.value) return
+  updateInstalling.value = true
+  updateStatus.value = `Downloading Clipvyn ${updateVersion.value}…`
+  try {
+    await invoke<{ version: string }>('install_android_update', {
+      apkUrl: updateUrl.value,
+      version: updateVersion.value,
+    })
+    updateStatus.value = 'Download complete. Confirm the update in the Android installer.'
+  } catch (reason) {
+    updateStatus.value = reason instanceof Error ? reason.message : String(reason)
+  } finally {
+    updateInstalling.value = false
+  }
 }
 async function publishText(text: string) {
   const contentHash = await hashParts([new TextEncoder().encode('text\0'), new TextEncoder().encode(text)])
@@ -384,7 +402,7 @@ function deviceIsOnline(device: ConnectedDevice) { return device.id === 'local-w
 function deviceIcon(device: ConnectedDevice) { const platform = device.platform.toLowerCase(); return platform.includes('win') ? monitorIcon : platform.includes('mac') ? laptopIcon : smartphoneIcon }
 async function removeDevice(device: ConnectedDevice) {
   if (!auth.user || device.id === thisDeviceId || deletingDeviceId.value) return
-  if (!window.confirm(`Remove ${device.name} from your device list? If Clipvyn is still open on that device, it may appear again.`)) return
+  if (!window.confirm(`Remove ${device.name} from your device list? Clipvyn will sign out on that device, and it must sign in again to reconnect.`)) return
   deletingDeviceId.value = device.id
   deviceError.value = null
   try {
@@ -400,9 +418,10 @@ function refreshPresenceWhenVisible() {
   void refreshPresence?.()
   void syncAndroidClipboard()
 }
+function onKeydown(event: KeyboardEvent) { if (event.key === 'Escape' && loginOpen.value) loginOpen.value = false }
 function age(value: number) { const min = Math.floor((Date.now() - value) / 60000); return min < 1 ? 'now' : min < 60 ? `${min}m ago` : `${Math.floor(min / 60)}h ago` }
-onBeforeUnmount(() => { stop?.(); stopDevices?.(); if (presenceTimer) clearInterval(presenceTimer); if (clockTimer) clearInterval(clockTimer); if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer); document.removeEventListener('visibilitychange', refreshPresenceWhenVisible) })
-onMounted(() => { auth.initialize(); void syncAndroidClipboard(); if (isAndroidCompanion) void getVersion().then((version) => { currentAppVersion.value = version }); clockTimer = setInterval(() => { now.value = Date.now() }, 60_000); document.addEventListener('visibilitychange', refreshPresenceWhenVisible) })
+onBeforeUnmount(() => { stop?.(); stopDevices?.(); if (presenceTimer) clearInterval(presenceTimer); if (clockTimer) clearInterval(clockTimer); if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer); document.removeEventListener('visibilitychange', refreshPresenceWhenVisible); window.removeEventListener('keydown', onKeydown) })
+onMounted(() => { auth.initialize(); void syncAndroidClipboard(); if (isAndroidCompanion) void getVersion().then((version) => { currentAppVersion.value = version; void checkAndroidUpdate() }); clockTimer = setInterval(() => { now.value = Date.now() }, 60_000); document.addEventListener('visibilitychange', refreshPresenceWhenVisible); window.addEventListener('keydown', onKeydown) })
 </script>
 
 <template>
@@ -439,12 +458,25 @@ onMounted(() => { auth.initialize(); void syncAndroidClipboard(); if (isAndroidC
         <h2 class="text-lg font-semibold">Sync settings</h2>
         <div v-if="isAndroidCompanion" class="setting-row android-update-setting">
           <div><b>App update</b><p>Installed version: {{ currentAppVersion || 'Reading…' }}</p><p v-if="updateStatus" :class="updateAvailable ? 'update-available' : ''">{{ updateStatus }}</p></div>
-          <div class="android-update-actions"><button class="secondary" :disabled="updateChecking" @click="checkAndroidUpdate">{{ updateChecking ? 'Checking…' : 'Check for updates' }}</button><button v-if="updateAvailable" class="primary" @click="openAndroidUpdate">Open download</button></div>
+          <div class="android-update-actions"><button class="secondary" :disabled="updateChecking || updateInstalling" @click="checkAndroidUpdate">{{ updateChecking ? 'Checking…' : 'Check for updates' }}</button><button v-if="updateAvailable" class="primary" :disabled="updateInstalling" @click="installAndroidUpdate">{{ updateInstalling ? 'Downloading…' : 'Download & install' }}</button></div>
         </div>
         <div class="setting-row"><div><b>Auto sync</b><p>New clipboard items sync immediately in realtime.</p></div><span class="setting-on">On</span></div><div class="setting-row"><div><b>Device status</b><p>Presence refreshes every 10 minutes and when the app becomes active.</p></div><span>10 min</span></div><div class="setting-row"><div><b>Clipboard history</b><p>Stores the latest 80 items and shows up to 50 matching items.</p></div><span>80 / 50</span></div><div class="setting-row"><div><b>Clipboard permission</b><p>{{ isAndroidCompanion ? 'Android allows clipboard access while Clipvyn is visible.' : 'Paste needs browser permission and a direct button press.' }}</p></div><span>Required</span></div>
       </section>
     </section>
-    <div v-if="loginOpen" class="fixed inset-0 grid place-items-center bg-black/70 p-5"><form class="w-full max-w-sm rounded-2xl border border-white/10 bg-[#101a31] p-6" @submit.prevent="submit"><h2 class="text-xl font-semibold">Sign in to Clipvyn</h2><p class="mt-1 text-sm text-slate-400">Use the same Firebase account as desktop.</p><input v-model="email" required type="email" placeholder="Email" class="search mt-5 w-full" /><input v-model="password" required type="password" minlength="6" placeholder="Password" class="search mt-3 w-full" /><p v-if="auth.error" class="mt-3 text-sm text-rose-300">{{ auth.error }}</p><button class="primary mt-5 w-full" :disabled="auth.busy">{{ auth.busy ? 'Signing in…' : 'Sign in' }}</button><button type="button" class="mt-3 w-full text-sm text-slate-400" @click="loginOpen = false">Cancel</button></form></div>
+    <div v-if="loginOpen" class="dialog-backdrop" @click.self="loginOpen = false">
+      <form class="dialog-panel" role="dialog" aria-modal="true" aria-labelledby="web-login-title" @submit.prevent="submit">
+        <div class="dialog-heading">
+          <div class="min-w-0"><h2 id="web-login-title" class="text-xl font-semibold">Sign in to Clipvyn</h2><p class="mt-1 text-sm text-slate-400">Use the same Firebase account as desktop.</p></div>
+          <button type="button" class="dialog-close" aria-label="Close sign in dialog" @click="loginOpen = false"><Icon :icon="xIcon" aria-hidden="true" /></button>
+        </div>
+        <div class="dialog-body">
+          <input v-model="email" required type="email" autocomplete="email" inputmode="email" autofocus placeholder="Email" class="search w-full" />
+          <input v-model="password" required type="password" autocomplete="current-password" minlength="6" placeholder="Password" class="search mt-3 w-full" />
+          <p v-if="auth.error" class="mt-3 text-sm text-rose-300">{{ auth.error }}</p>
+        </div>
+        <div class="dialog-actions"><button class="primary" :disabled="auth.busy">{{ auth.busy ? 'Signing in…' : 'Sign in' }}</button><button type="button" class="dialog-text-action" @click="loginOpen = false">Cancel</button></div>
+      </form>
+    </div>
     <nav class="mobile-nav"><button :class="activeSection === 'clipboard' && 'active'" @click="showSection('clipboard')"><Icon :icon="clipboardIcon" aria-hidden="true" /><span>Clipboard</span></button><button :class="activeSection === 'devices' && 'active'" @click="showSection('devices')"><Icon :icon="devicesIcon" aria-hidden="true" /><span>Devices</span></button><button v-if="auth.signedIn || isAndroidCompanion" :class="activeSection === 'settings' && 'active'" @click="showSection('settings')"><Icon :icon="settingsIcon" aria-hidden="true" /><span>Settings</span></button></nav>
   </main>
 </template>

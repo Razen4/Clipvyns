@@ -14,6 +14,7 @@ const lockPath = resolve(root, 'package-lock.json')
 const tauriPath = resolve(root, 'src-tauri', 'tauri.conf.json')
 const cargoPath = resolve(root, 'src-tauri', 'Cargo.toml')
 const cargoLockPath = resolve(root, 'src-tauri', 'Cargo.lock')
+const androidPropertiesPath = resolve(root, 'src-tauri', 'gen', 'android', 'app', 'tauri.properties')
 const readmePath = resolve(root, 'README.md')
 
 const packageJson = JSON.parse(await readFile(packagePath, 'utf8'))
@@ -21,7 +22,17 @@ const packageLock = JSON.parse(await readFile(lockPath, 'utf8'))
 const tauriConfig = JSON.parse(await readFile(tauriPath, 'utf8'))
 const cargoToml = await readFile(cargoPath, 'utf8')
 const cargoLock = await readFile(cargoLockPath, 'utf8')
+const androidProperties = await readFile(androidPropertiesPath, 'utf8').catch(() => null)
 const readme = await readFile(readmePath, 'utf8')
+
+const [androidMajor, androidMinor, androidPatch] = requestedVersion
+  .split('-', 1)[0]
+  .split('.')
+  .map(Number)
+const androidVersionCode = androidMajor * 1_000_000 + androidMinor * 1_000 + androidPatch
+if (!Number.isSafeInteger(androidVersionCode) || androidVersionCode < 1 || androidMinor > 999 || androidPatch > 999) {
+  throw new Error('Android versions require MAJOR.MINOR.PATCH values where MINOR and PATCH are at most 999')
+}
 
 const cargoVersion = cargoToml.match(/^\[package\][\s\S]*?^version = "([^"]+)"/m)?.[1]
 const cargoLockVersion = cargoLock.match(/^\[\[package\]\]\r?\nname = "clipboard-sharings"\r?\nversion = "([^"]+)"/m)?.[1]
@@ -32,11 +43,17 @@ const versions = {
   'src-tauri/tauri.conf.json': tauriConfig.version,
   'src-tauri/Cargo.toml': cargoVersion,
   'src-tauri/Cargo.lock': cargoLockVersion,
+  ...(androidProperties ? {
+    'Android versionName': androidProperties.match(/^tauri\.android\.versionName=(.+)$/m)?.[1],
+    'Android versionCode': androidProperties.match(/^tauri\.android\.versionCode=(.+)$/m)?.[1],
+  } : {}),
   'README.md': readme.match(/^Current version: \*\*([^*]+)\*\*$/m)?.[1],
 }
 
 if (checkOnly) {
-  const mismatches = Object.entries(versions).filter(([, version]) => version !== requestedVersion)
+  const mismatches = Object.entries(versions).filter(([field, version]) => (
+    field === 'Android versionCode' ? version !== String(androidVersionCode) : version !== requestedVersion
+  ))
   if (mismatches.length) {
     throw new Error(`Expected version ${requestedVersion}: ${mismatches.map(([file, version]) => `${file}=${version}`).join(', ')}`)
   }
@@ -57,6 +74,9 @@ const updatedCargoLock = cargoLock.replace(
   /(^\[\[package\]\]\r?\nname = "clipboard-sharings"\r?\nversion = ")[^"]+("$)/m,
   `$1${requestedVersion}$2`,
 )
+const updatedAndroidProperties = androidProperties
+  ?.replace(/^tauri\.android\.versionName=.+$/m, `tauri.android.versionName=${requestedVersion}`)
+  .replace(/^tauri\.android\.versionCode=.+$/m, `tauri.android.versionCode=${androidVersionCode}`)
 const updatedReadme = readme
   .replace(/(^Current version: \*\*)[^*]+(\*\*$)/m, `$1${requestedVersion}$2`)
   .replace(/(^npm run version:set -- )\S+$/m, `$1${requestedVersion}`)
@@ -65,13 +85,15 @@ const updatedReadme = readme
   .replace(/(^git tag v)\S+$/m, `$1${requestedVersion}`)
   .replace(/(^git push origin main v)\S+$/m, `$1${requestedVersion}`)
 
-await Promise.all([
+const writes = [
   writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`),
   writeFile(lockPath, `${JSON.stringify(packageLock, null, 2)}\n`),
   writeFile(tauriPath, `${JSON.stringify(tauriConfig, null, 2)}\n`),
   writeFile(cargoPath, updatedCargoToml),
   writeFile(cargoLockPath, updatedCargoLock),
   writeFile(readmePath, updatedReadme),
-])
+]
+if (updatedAndroidProperties) writes.push(writeFile(androidPropertiesPath, updatedAndroidProperties))
+await Promise.all(writes)
 
 console.log(`Updated project version to ${requestedVersion}.`)

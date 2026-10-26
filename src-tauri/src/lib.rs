@@ -4,10 +4,10 @@ mod clipboard;
 mod database;
 #[cfg(desktop)]
 mod desktop;
-#[cfg(desktop)]
-mod model;
 #[cfg(mobile)]
 mod mobile;
+#[cfg(desktop)]
+mod model;
 
 #[cfg(desktop)]
 pub(crate) use desktop::{AppError, AppState, prune_history};
@@ -22,7 +22,10 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(mobile::init())
-        .invoke_handler(tauri::generate_handler![mobile::save_image_to_device])
+        .invoke_handler(tauri::generate_handler![
+            mobile::save_image_to_device,
+            mobile::install_android_update
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Clipvyn Companion");
 }

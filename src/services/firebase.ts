@@ -43,6 +43,8 @@ export interface ConnectedDevice {
   online: boolean
 }
 
+export const DEVICE_ACCESS_REVOKED_MESSAGE = 'This device was removed. Sign in again to reconnect it.'
+
 const requiredEnv = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -78,9 +80,10 @@ export function observeAuth(callback: (user: User | null) => void): Unsubscribe 
   return onAuthStateChanged(auth, callback)
 }
 
-export async function signInWithEmail(email: string, password: string): Promise<void> {
+export async function signInWithEmail(email: string, password: string): Promise<User> {
   if (!auth) throw new Error(firebaseConfigurationError ?? 'Firebase is not configured')
-  await signInWithEmailAndPassword(auth, email, password)
+  const credential = await signInWithEmailAndPassword(auth, email, password)
+  return credential.user
 }
 
 export async function signOutCurrentUser(): Promise<void> {
@@ -123,7 +126,43 @@ export function currentDeviceId(): string {
 export async function deleteConnectedDevice(uid: string, id: string): Promise<void> {
   if (!firestore) throw new Error(firebaseConfigurationError ?? 'Firebase is not configured')
   if (!id || id === deviceId()) throw new Error('The current device cannot be removed')
-  await deleteDoc(doc(userDevices(uid), id))
+  await setDoc(doc(userDevices(uid), id), {
+    id,
+    ownerUid: uid,
+    revoked: true,
+    revokedAt: Date.now(),
+    schemaVersion: 2,
+  })
+}
+
+export async function currentDeviceIsRevoked(uid: string): Promise<boolean> {
+  if (!firestore) return false
+  const snapshot = await getDoc(doc(userDevices(uid), deviceId()))
+  return snapshot.exists() && snapshot.data().revoked === true
+}
+
+export async function restoreCurrentDeviceAccess(uid: string): Promise<void> {
+  if (!firestore) return
+  const reference = doc(userDevices(uid), deviceId())
+  const snapshot = await getDoc(reference)
+  if (snapshot.exists() && snapshot.data().revoked === true) await deleteDoc(reference)
+}
+
+export function observeCurrentDeviceRevocation(
+  uid: string,
+  onRevoked: () => void,
+  onError: (error: Error) => void,
+): Unsubscribe {
+  let notified = false
+  return onSnapshot(doc(userDevices(uid), deviceId()), (snapshot) => {
+    const revoked = snapshot.exists() && snapshot.data().revoked === true
+    if (revoked && !notified) {
+      notified = true
+      onRevoked()
+    } else if (!revoked) {
+      notified = false
+    }
+  }, onError)
 }
 
 export async function publishDevicePresence(
@@ -134,7 +173,10 @@ export async function publishDevicePresence(
   if (!firestore) return
   const platform = device?.platform || navigator.platform || 'Unknown platform'
   const id = deviceId()
-  await setDoc(doc(userDevices(uid), id), {
+  const reference = doc(userDevices(uid), id)
+  const existing = await getDoc(reference)
+  if (existing.exists() && existing.data().revoked === true) throw new Error(DEVICE_ACCESS_REVOKED_MESSAGE)
+  await setDoc(reference, {
     id,
     ownerUid: uid,
     name: device?.name || `${appKind} · ${platform}`,
@@ -153,7 +195,7 @@ export function observeDevices(
   return onSnapshot(userDevices(uid), (snapshot) => {
     const devices = snapshot.docs.flatMap((entry) => {
       const value = entry.data()
-      if (typeof value.id !== 'string' || typeof value.name !== 'string' || typeof value.platform !== 'string' || typeof value.lastSeen !== 'number') return []
+      if (value.revoked === true || typeof value.id !== 'string' || typeof value.name !== 'string' || typeof value.platform !== 'string' || typeof value.lastSeen !== 'number') return []
       return [{ id: value.id, name: value.name, platform: value.platform, lastSeen: value.lastSeen, online: Date.now() - value.lastSeen < DEVICE_ACTIVE_WINDOW_MS }]
     }).sort((a, b) => b.lastSeen - a.lastSeen)
     callback(devices)

@@ -21,8 +21,8 @@ import { isRegistered, register, unregister, type ShortcutEvent } from '@tauri-a
 import { relaunch } from '@tauri-apps/plugin-process'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 
-import { currentDeviceId, deleteConnectedDevice, DEVICE_ACTIVE_WINDOW_MS, observeDevices, type ConnectedDevice } from './services/firebase'
-import { getLocalDeviceInfo, isLaunchAtLoginEnabled, readLocalImage, revealDesktopApplication, setLaunchAtLogin } from './services/clipboard'
+import { currentDeviceId, deleteConnectedDevice, DEVICE_ACCESS_REVOKED_MESSAGE, DEVICE_ACTIVE_WINDOW_MS, observeDevices, type ConnectedDevice } from './services/firebase'
+import { getLocalDeviceInfo, hideDesktopApplication, isLaunchAtLoginEnabled, readLocalImage, revealDesktopApplication, setLaunchAtLogin } from './services/clipboard'
 import { useAuthStore } from './stores/auth'
 import { useClipboardStore } from './stores/clipboard'
 import type { ClipboardItem } from './types'
@@ -55,6 +55,7 @@ const shortcutBusy = ref(false)
 const launchAtLoginEnabled = ref(false)
 const launchAtLoginBusy = ref(false)
 const launchAtLoginError = ref<string | null>(null)
+const backgroundModeError = ref<string | null>(null)
 const appVersion = ref('…')
 const availableUpdate = shallowRef<Update | null>(null)
 const updateStatus = ref<'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'error'>('idle')
@@ -96,6 +97,10 @@ watch(() => auth.user?.uid, (uid) => {
   }
 })
 
+watch(() => auth.notice, (notice) => {
+  if (notice === DEVICE_ACCESS_REVOKED_MESSAGE) loginOpen.value = true
+})
+
 async function submitAuth() {
   try {
     await auth.submit(email.value.trim(), password.value)
@@ -121,7 +126,7 @@ function age(value: number) { const min = Math.floor((Date.now() - value) / 6000
 
 async function removeDevice(device: ConnectedDevice) {
   if (!auth.user || device.id === thisDeviceId || deletingDeviceId.value) return
-  if (!window.confirm(`Remove ${device.name} from your device list? If Clipvyn is still open on that device, it may appear again.`)) return
+  if (!window.confirm(`Remove ${device.name} from your device list? Clipvyn will sign out on that device, and it must sign in again to reconnect.`)) return
   deletingDeviceId.value = device.id
   deviceError.value = null
   try {
@@ -242,6 +247,15 @@ async function toggleLaunchAtLogin() {
       : 'Unable to disable launch at login. Check your system settings and try again.'
   } finally {
     launchAtLoginBusy.value = false
+  }
+}
+
+async function hideToBackground() {
+  backgroundModeError.value = null
+  try {
+    await hideDesktopApplication()
+  } catch (reason) {
+    backgroundModeError.value = `Unable to hide the application: ${reason instanceof Error ? reason.message : String(reason)}`
   }
 }
 
@@ -385,10 +399,23 @@ onBeforeUnmount(() => {
 
       <section v-else-if="activeSection === 'devices'" class="panel devices-panel"><div v-if="auth.signedIn && deviceError" class="list-error mb-3">Device sync error: {{ deviceError }}</div><div v-if="auth.signedIn && !visibleDevices.length" class="empty">No device heartbeat yet.</div><div v-else class="space-y-3"><article v-for="device in visibleDevices" :key="device.id" class="device-card"><div class="device-icon"><Icon :icon="deviceIcon(device)" aria-hidden="true" /></div><div class="min-w-0 flex-1"><b class="block truncate">{{ device.name }}</b><p class="mt-1 text-sm text-slate-400">{{ device.platform }}</p><p class="mt-2 text-xs" :class="deviceIsActive(device) ? 'text-emerald-400' : 'text-slate-500'">● {{ deviceIsActive(device) ? 'Active recently' : `Last seen ${age(device.lastSeen)}` }}</p></div><div class="device-actions"><span class="badge" :class="deviceIsActive(device) ? 'device-online' : 'device-offline'">{{ device.id === thisDeviceId ? 'This device' : deviceIsActive(device) ? 'Active' : 'Inactive' }}</span><button v-if="auth.signedIn && device.id !== thisDeviceId" type="button" class="device-delete" :disabled="deletingDeviceId === device.id" :aria-label="`Remove ${device.name}`" title="Remove device" @click="removeDevice(device)"><Icon v-if="deletingDeviceId !== device.id" :icon="trashIcon" aria-hidden="true" /><span v-else class="delete-spinner" aria-hidden="true" /></button></div></article></div></section>
 
-      <section v-else class="panel settings-panel"><h2 class="text-lg font-semibold">Sync settings</h2><div class="setting-row"><div><b>Automatic capture</b><p>New clipboard items are captured and synced immediately.</p></div><span class="setting-on">On</span></div><div class="setting-row"><div><b>Launch at login</b><p>Open Clipvyn automatically when you sign in to macOS or Windows.</p><p v-if="launchAtLoginError" class="shortcut-error">{{ launchAtLoginError }}</p></div><button type="button" role="switch" :aria-checked="launchAtLoginEnabled" :disabled="launchAtLoginBusy" class="shortcut-toggle" :class="launchAtLoginEnabled && 'enabled'" @click="toggleLaunchAtLogin"><span /></button></div><div class="setting-row shortcut-setting"><div><b>Open app shortcut</b><p>Shows and focuses the app while it is running.</p><p v-if="shortcutError" class="shortcut-error">{{ shortcutError }}</p></div><div class="shortcut-controls"><select :value="shortcutValue" :disabled="shortcutBusy" aria-label="Global shortcut" @change="changeShortcut"><option v-for="option in shortcutOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select><button type="button" role="switch" :aria-checked="shortcutEnabled" :disabled="shortcutBusy" class="shortcut-toggle" :class="shortcutEnabled && 'enabled'" @click="toggleShortcut"><span /></button></div></div><div class="setting-row"><div><b>Device status</b><p>Presence refreshes every 10 minutes.</p></div><span>10 min</span></div><div class="setting-row"><div><b>Clipboard history</b><p>Stores the latest 80 items and shows up to 50 matching items.</p></div><span>80 / 50</span></div></section>
+      <section v-else class="panel settings-panel"><h2 class="text-lg font-semibold">Sync settings</h2><div class="setting-row"><div><b>Automatic capture</b><p>New clipboard items are captured and synced immediately.</p></div><span class="setting-on">On</span></div><div class="setting-row"><div><b>Background mode</b><p>Closing the window keeps clipboard capture and sync running. Reopen Clipvyn from the tray or your global shortcut.</p><p v-if="backgroundModeError" class="shortcut-error">{{ backgroundModeError }}</p></div><button type="button" class="secondary setting-action" @click="hideToBackground">Hide now</button></div><div class="setting-row"><div><b>Launch at login</b><p>Open Clipvyn automatically when you sign in to macOS or Windows.</p><p v-if="launchAtLoginError" class="shortcut-error">{{ launchAtLoginError }}</p></div><button type="button" role="switch" :aria-checked="launchAtLoginEnabled" :disabled="launchAtLoginBusy" class="shortcut-toggle" :class="launchAtLoginEnabled && 'enabled'" @click="toggleLaunchAtLogin"><span /></button></div><div class="setting-row shortcut-setting"><div><b>Open app shortcut</b><p>Shows and focuses the app while it is running.</p><p v-if="shortcutError" class="shortcut-error">{{ shortcutError }}</p></div><div class="shortcut-controls"><select :value="shortcutValue" :disabled="shortcutBusy" aria-label="Global shortcut" @change="changeShortcut"><option v-for="option in shortcutOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select><button type="button" role="switch" :aria-checked="shortcutEnabled" :disabled="shortcutBusy" class="shortcut-toggle" :class="shortcutEnabled && 'enabled'" @click="toggleShortcut"><span /></button></div></div><div class="setting-row"><div><b>Device status</b><p>Presence refreshes every 10 minutes.</p></div><span>10 min</span></div><div class="setting-row"><div><b>Clipboard history</b><p>Stores the latest 80 items and shows up to 50 matching items.</p></div><span>80 / 50</span></div></section>
     </section>
 
-    <div v-if="loginOpen" class="fixed inset-0 z-30 grid place-items-center bg-black/70 p-5" @click.self="loginOpen = false"><form class="w-full max-w-sm rounded-2xl border border-white/10 bg-[#101a31] p-6" @submit.prevent="submitAuth"><h2 class="text-xl font-semibold">Sign in to Clipvyn</h2><p class="mt-1 text-sm text-slate-400">Use the same Firebase account as the web app.</p><input v-model="email" required type="email" autocomplete="email" placeholder="Email" class="search mt-5 w-full" /><input v-model="password" required type="password" autocomplete="current-password" minlength="6" placeholder="Password" class="search mt-3 w-full" /><p v-if="auth.error" class="mt-3 text-sm text-rose-300">{{ auth.error }}</p><p v-if="auth.notice" class="mt-3 text-sm text-emerald-300">{{ auth.notice }}</p><button class="primary mt-5 w-full" :disabled="auth.busy">{{ auth.busy ? 'Signing in…' : 'Sign in' }}</button><button type="button" class="mt-3 w-full text-sm text-slate-400" :disabled="auth.busy" @click="auth.resetPassword(email)">Reset Firebase password</button><button type="button" class="mt-3 w-full text-sm text-slate-400" @click="loginOpen = false">Cancel</button></form></div>
+    <div v-if="loginOpen" class="dialog-backdrop" @click.self="loginOpen = false">
+      <form class="dialog-panel" role="dialog" aria-modal="true" aria-labelledby="desktop-login-title" @submit.prevent="submitAuth">
+        <div class="dialog-heading">
+          <div class="min-w-0"><h2 id="desktop-login-title" class="text-xl font-semibold">Sign in to Clipvyn</h2><p class="mt-1 text-sm text-slate-400">Use the same Firebase account as the web app.</p></div>
+          <button type="button" class="dialog-close" aria-label="Close sign in dialog" @click="loginOpen = false"><Icon :icon="xIcon" aria-hidden="true" /></button>
+        </div>
+        <div class="dialog-body">
+          <input v-model="email" required type="email" autocomplete="email" inputmode="email" autofocus placeholder="Email" class="search w-full" />
+          <input v-model="password" required type="password" autocomplete="current-password" minlength="6" placeholder="Password" class="search mt-3 w-full" />
+          <p v-if="auth.error" class="mt-3 text-sm text-rose-300">{{ auth.error }}</p><p v-if="auth.notice" class="mt-3 text-sm text-emerald-300">{{ auth.notice }}</p>
+        </div>
+        <div class="dialog-actions"><button class="primary" :disabled="auth.busy">{{ auth.busy ? 'Signing in…' : 'Sign in' }}</button><button type="button" class="dialog-text-action" :disabled="auth.busy" @click="auth.resetPassword(email)">Reset Firebase password</button><button type="button" class="dialog-text-action" @click="loginOpen = false">Cancel</button></div>
+      </form>
+    </div>
 
     <nav class="mobile-nav"><button :class="activeSection === 'clipboard' && 'active'" @click="showSection('clipboard')"><Icon :icon="clipboardIcon" aria-hidden="true" /><span>Clipboard</span></button><button :class="activeSection === 'devices' && 'active'" @click="showSection('devices')"><Icon :icon="devicesIcon" aria-hidden="true" /><span>Devices</span></button><button v-if="auth.signedIn" :class="activeSection === 'settings' && 'active'" @click="showSection('settings')"><Icon :icon="settingsIcon" aria-hidden="true" /><span>Settings</span></button></nav>
   </main>

@@ -3,11 +3,15 @@ package com.razencdev.clipboard_sharings
 import android.Manifest
 import android.app.Activity
 import android.content.ContentValues
+import android.content.Intent
 import android.media.MediaScannerConnection
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.Settings
 import android.util.Base64
+import androidx.core.content.FileProvider
 import app.tauri.PermissionState
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
@@ -19,11 +23,19 @@ import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import java.io.File
 import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 
 @InvokeArg
 class SaveImageArgs {
   lateinit var fileName: String
   lateinit var dataBase64: String
+}
+
+@InvokeArg
+class InstallUpdateArgs {
+  lateinit var apkUrl: String
+  lateinit var version: String
 }
 
 @TauriPlugin(
@@ -35,6 +47,10 @@ class SaveImageArgs {
   ]
 )
 class ImageSaverPlugin(private val activity: Activity) : Plugin(activity) {
+  companion object {
+    private const val MAX_APK_BYTES = 200L * 1024L * 1024L
+  }
+
   @Command
   fun saveImage(invoke: Invoke) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && getPermissionState("storage") != PermissionState.GRANTED) {
@@ -115,5 +131,105 @@ class ImageSaverPlugin(private val activity: Activity) : Plugin(activity) {
     FileOutputStream(image).use { it.write(bytes) }
     MediaScannerConnection.scanFile(activity, arrayOf(image.absolutePath), arrayOf("image/png"), null)
     return "${Environment.DIRECTORY_PICTURES}/Clipvyn/$fileName"
+  }
+
+  @Command
+  fun installUpdate(invoke: Invoke) {
+    val args = invoke.parseArgs(InstallUpdateArgs::class.java)
+    val source = runCatching { URL(args.apkUrl) }.getOrNull()
+    if (source == null || source.protocol != "https") {
+      invoke.reject("The update download URL is invalid")
+      return
+    }
+    if (!args.version.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+"))) {
+      invoke.reject("The update version is invalid")
+      return
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !activity.packageManager.canRequestPackageInstalls()) {
+      val settingsIntent = Intent(
+        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+        Uri.parse("package:${activity.packageName}")
+      )
+      activity.startActivity(settingsIntent)
+      invoke.reject("Allow Clipvyn to install unknown apps, then return and tap Download & install again.")
+      return
+    }
+
+    Thread {
+      val updateDirectory = File(activity.cacheDir, "updates").apply { mkdirs() }
+      val partial = File(updateDirectory, "Clipvyn-${args.version}.apk.part")
+      try {
+        val apk = File(updateDirectory, "Clipvyn-${args.version}.apk")
+        partial.delete()
+        apk.delete()
+        downloadApk(source, partial)
+        verifyApk(partial)
+        if (!partial.renameTo(apk)) throw IllegalStateException("Unable to prepare the downloaded update")
+
+        activity.runOnUiThread {
+          try {
+            val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", apk)
+            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+              setDataAndType(uri, "application/vnd.android.package-archive")
+              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            activity.startActivity(installIntent)
+            val result = JSObject()
+            result.put("version", args.version)
+            invoke.resolve(result)
+          } catch (error: Exception) {
+            apk.delete()
+            invoke.reject("Unable to open the Android installer: ${error.message ?: "unknown error"}", error)
+          }
+        }
+      } catch (error: Exception) {
+        partial.delete()
+        invoke.reject("Unable to download the update: ${error.message ?: "unknown error"}", error)
+      }
+    }.start()
+  }
+
+  private fun downloadApk(source: URL, destination: File) {
+    val connection = source.openConnection() as HttpURLConnection
+    connection.connectTimeout = 15_000
+    connection.readTimeout = 30_000
+    connection.instanceFollowRedirects = true
+    connection.setRequestProperty("Accept", "application/vnd.android.package-archive, application/octet-stream")
+    connection.setRequestProperty("User-Agent", "Clipvyn-Android-Updater")
+    try {
+      val status = connection.responseCode
+      if (status !in 200..299) throw IllegalStateException("Download server returned $status")
+      val declaredLength = connection.contentLengthLong
+      if (declaredLength > MAX_APK_BYTES) throw IllegalStateException("Update exceeds the 200 MiB limit")
+      connection.inputStream.use { input ->
+        FileOutputStream(destination).use { output ->
+          val buffer = ByteArray(64 * 1024)
+          var total = 0L
+          while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            total += count
+            if (total > MAX_APK_BYTES) throw IllegalStateException("Update exceeds the 200 MiB limit")
+            output.write(buffer, 0, count)
+          }
+        }
+      }
+    } finally {
+      connection.disconnect()
+    }
+  }
+
+  private fun verifyApk(file: File) {
+    if (file.length() < 1_024) throw IllegalStateException("Downloaded update is empty")
+    file.inputStream().use { input ->
+      if (input.read() != 0x50 || input.read() != 0x4b) {
+        throw IllegalStateException("Downloaded file is not a valid APK")
+      }
+    }
+    val packageInfo = activity.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+      ?: throw IllegalStateException("Android could not read the downloaded APK")
+    if (packageInfo.packageName != activity.packageName) {
+      throw IllegalStateException("Downloaded APK belongs to a different application")
+    }
   }
 }

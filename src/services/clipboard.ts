@@ -16,6 +16,10 @@ export function revealDesktopApplication(): Promise<void> {
   return invoke('reveal_application')
 }
 
+export function hideDesktopApplication(): Promise<void> {
+  return invoke('hide_application')
+}
+
 export function isLaunchAtLoginEnabled(): Promise<boolean> {
   return isEnabled()
 }

@@ -2,7 +2,7 @@
 
 A compact macOS and Windows clipboard-history application built with Tauri 2, Vue 3, TypeScript, Pinia, Tailwind CSS, Rust, and SQLite.
 
-Current version: **0.0.18**
+Current version: **0.0.22**
 
 ## Current implementation
 
@@ -88,6 +88,13 @@ The APK is written beneath
 release must be signed with the same protected Android signing key for every
 future update.
 
+The Android companion checks the latest GitHub Release when it starts. When a
+new arm64 APK is available, **Settings > App update > Download & install**
+downloads it into the app cache and opens the Android installer. Android still
+requires the user to approve the installation and may request **Install unknown
+apps** permission the first time. Every update must keep the same application
+ID and Android signing key as the installed APK.
+
 To build Windows x64 plus macOS Apple Silicon and Intel in one GitHub Actions
 run, add these repository Actions secrets, then run the **Build desktop
 installers** workflow:
@@ -133,8 +140,8 @@ Get-Content -Raw "$env:USERPROFILE\.tauri\clipboard-sharings.key" |
 Update and verify all application version fields from any development machine:
 
 ```sh
-npm run version:set -- 0.0.18
-npm run version:check -- 0.0.18
+npm run version:set -- 0.0.22
+npm run version:check -- 0.0.22
 npm run build
 ```
 
@@ -142,14 +149,14 @@ Only when a release is ready and pushing has been explicitly authorized:
 
 ```sh
 git add .
-git commit -m "chore: release v0.0.18"
-git tag v0.0.18
-git push origin main v0.0.18
+git commit -m "chore: release v0.0.22"
+git tag v0.0.22
+git push origin main v0.0.22
 ```
 
 The workflow rejects a tag whose version does not match `package.json`,
 `package-lock.json`, `src-tauri/tauri.conf.json`, `Cargo.toml`, and `Cargo.lock`.
-Version `0.1.5` is the updater bootstrap release and must be installed manually;
+Version `0.0.22` is the Android updater bootstrap release and must be installed manually;
 clients on that release can install later releases from inside the app.
 
 The local database and image directory are created beneath Tauri's per-user app-data directory. Typical locations are:
