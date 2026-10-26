@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Icon } from '@iconify/vue'
 import checkIcon from '@iconify-icons/lucide/check'
 import clipboardIcon from '@iconify-icons/lucide/clipboard'
@@ -279,6 +279,7 @@ async function installAndroidUpdate() {
   if (!updateUrl.value || !updateVersion.value || updateInstalling.value) return
   updateInstalling.value = true
   updateStatus.value = `Downloading Clipvyn ${updateVersion.value}…`
+  await nextTick()
   try {
     await invoke<{ version: string }>('install_android_update', {
       apkUrl: updateUrl.value,
@@ -457,8 +458,8 @@ onMounted(() => { auth.initialize(); void syncAndroidClipboard(); if (isAndroidC
       <section v-else class="panel settings-panel">
         <h2 class="text-lg font-semibold">Sync settings</h2>
         <div v-if="isAndroidCompanion" class="setting-row android-update-setting">
-          <div><b>App update</b><p>Installed version: {{ currentAppVersion || 'Reading…' }}</p><p v-if="updateStatus" :class="updateAvailable ? 'update-available' : ''">{{ updateStatus }}</p></div>
-          <div class="android-update-actions"><button class="secondary" :disabled="updateChecking || updateInstalling" @click="checkAndroidUpdate">{{ updateChecking ? 'Checking…' : 'Check for updates' }}</button><button v-if="updateAvailable" class="primary" :disabled="updateInstalling" @click="installAndroidUpdate">{{ updateInstalling ? 'Downloading…' : 'Download & install' }}</button></div>
+          <div><b>App update</b><p>Installed version: {{ currentAppVersion || 'Reading…' }}</p><p v-if="updateStatus" :class="updateAvailable ? 'update-available' : ''">{{ updateStatus }}</p><div v-if="updateInstalling" class="android-update-progress" role="progressbar" aria-label="Downloading update"><span /></div></div>
+          <div class="android-update-actions"><button class="secondary" :disabled="updateChecking || updateInstalling" @click="checkAndroidUpdate">{{ updateChecking ? 'Checking…' : 'Check for updates' }}</button><button v-if="updateAvailable" class="primary android-install-action" :disabled="updateInstalling" @click="installAndroidUpdate"><span v-if="updateInstalling" class="button-spinner" aria-hidden="true" />{{ updateInstalling ? 'Downloading…' : 'Download & install' }}</button></div>
         </div>
         <div class="setting-row"><div><b>Auto sync</b><p>New clipboard items sync immediately in realtime.</p></div><span class="setting-on">On</span></div><div class="setting-row"><div><b>Device status</b><p>Presence refreshes every 10 minutes and when the app becomes active.</p></div><span>10 min</span></div><div class="setting-row"><div><b>Clipboard history</b><p>Stores the latest 80 items and shows up to 50 matching items.</p></div><span>80 / 50</span></div><div class="setting-row"><div><b>Clipboard permission</b><p>{{ isAndroidCompanion ? 'Android allows clipboard access while Clipvyn is visible.' : 'Paste needs browser permission and a direct button press.' }}</p></div><span>Required</span></div>
       </section>
