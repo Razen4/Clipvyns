@@ -2,7 +2,7 @@
 
 A compact macOS and Windows clipboard-history application built with Tauri 2, Vue 3, TypeScript, Pinia, Tailwind CSS, Rust, and SQLite.
 
-Current version: **0.0.22**
+Current version: **0.0.23**
 
 ## Current implementation
 
@@ -140,8 +140,8 @@ Get-Content -Raw "$env:USERPROFILE\.tauri\clipboard-sharings.key" |
 Update and verify all application version fields from any development machine:
 
 ```sh
-npm run version:set -- 0.0.22
-npm run version:check -- 0.0.22
+npm run version:set -- 0.0.23
+npm run version:check -- 0.0.23
 npm run build
 ```
 
@@ -149,9 +149,9 @@ Only when a release is ready and pushing has been explicitly authorized:
 
 ```sh
 git add .
-git commit -m "chore: release v0.0.22"
-git tag v0.0.22
-git push origin main v0.0.22
+git commit -m "chore: release v0.0.23"
+git tag v0.0.23
+git push origin main v0.0.23
 ```
 
 The workflow rejects a tag whose version does not match `package.json`,
